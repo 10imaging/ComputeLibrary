@@ -1,7 +1,7 @@
 var searchData=
 [
-  ['phasetype',['PhaseType',['../namespacearm__compute.xhtml#af00a42ecad444bbda75cde1b64bd7e72',1,'arm_compute']]],
-  ['poolingtype',['PoolingType',['../namespacearm__compute.xhtml#a9172da722f0a434e5cc07c0a3c115d93',1,'arm_compute']]],
-  ['precisiontype',['PrecisionType',['../structarm__compute_1_1_i_o_format_info.xhtml#a36c28b28da4e04d698d6b598fb1eaca6',1,'arm_compute::IOFormatInfo']]],
-  ['printregion',['PrintRegion',['../structarm__compute_1_1_i_o_format_info.xhtml#ae283722f31a4c59039f9abd44f10dbd0',1,'arm_compute::IOFormatInfo']]]
+  ['magnitudetype',['MagnitudeType',['../namespacearm__compute.xhtml#a7b3ec6413f000b02fdb4e39a951d9f8a',1,'arm_compute']]],
+  ['malicounterblockname',['MaliCounterBlockName',['../namespacemali__userspace.xhtml#a5108465542fd3a21106324203a729e06',1,'mali_userspace']]],
+  ['mappingtype',['MappingType',['../namespacearm__compute.xhtml#af0a4d6be70322c742c12da1edccbb74d',1,'arm_compute']]],
+  ['matrixpattern',['MatrixPattern',['../namespacearm__compute.xhtml#afdda916edc7502967bbec17ea3c06c02',1,'arm_compute']]]
 ];

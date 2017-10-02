@@ -27,6 +27,7 @@
 #include "arm_compute/core/NEON/kernels/NEFillBorderKernel.h"
 #include "arm_compute/core/NEON/kernels/NESoftmaxLayerKernel.h"
 #include "arm_compute/runtime/IFunction.h"
+#include "arm_compute/runtime/MemoryGroup.h"
 #include "arm_compute/runtime/Tensor.h"
 
 namespace arm_compute
@@ -36,7 +37,7 @@ class ITensor;
 /** Basic function to compute a SoftmaxLayer.
  *
  * Softmax is calculated by :
- * @f[ out = exp(x - max(x)) / sum(exp(x - max(x))) @f]
+ * @f[ out = \frac{e^{x - max(x)}}{\sum{e^{x - max(x)}}} @f]
  *
  * This function runs the following kernels:
  * -# @ref NELogits1DMaxKernel
@@ -47,10 +48,10 @@ class NESoftmaxLayer : public IFunction
 {
 public:
     /** Constructor */
-    NESoftmaxLayer();
+    NESoftmaxLayer(std::shared_ptr<IMemoryManager> memory_manager = nullptr);
     /** Set the input and output tensors.
      *
-     * @param[in]  input  Source tensor. Data types supported: F32.
+     * @param[in]  input  Source tensor. Data types supported: QS8/QS16/F16/F32.
      * @param[out] output Destination tensor. Data types supported: same as @p input.
      */
     void configure(ITensor *input, ITensor *output);
@@ -59,11 +60,11 @@ public:
     void run() override;
 
 private:
+    MemoryGroup                 _memory_group;
     NELogits1DMaxKernel         _max_kernel;
     NELogits1DShiftExpSumKernel _shift_exp_sum_kernel;
     NELogits1DNormKernel        _norm_kernel;
     NEFillBorderKernel          _fill_border_kernel;
-    NEFillBorderKernel          _fill_border_kernel_sum;
     Tensor                      _max;
     Tensor                      _sum;
     Tensor                      _tmp;

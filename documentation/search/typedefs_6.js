@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['lkinternalkeypointarray',['LKInternalKeypointArray',['../namespacearm__compute.xhtml#a681c120e2188371794ec3a59768c64ab',1,'arm_compute']]]
+  ['groupmappings',['GroupMappings',['../namespacearm__compute.xhtml#ad2398d0f2ce77c10bbebf1f85317dde5',1,'arm_compute']]]
 ];

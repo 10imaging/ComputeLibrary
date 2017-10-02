@@ -60,13 +60,13 @@ public:
     void configure(const ITensor *input1, const ITensor *input2, ITensor *output);
 
     // Inherited methods overridden:
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
 
 private:
     /** Common signature for all the specialised absolute difference functions
      *
-     * @param[in]  input1 An input tensor. Data types supported: U8, S16.
-     * @param[in]  input2 An input tensor. Data types supported: U8, S16.
+     * @param[in]  input1 An input tensor. Data types supported: U8/S16.
+     * @param[in]  input2 An input tensor. Data types supported: U8/S16.
      * @param[out] output The output tensor, Data types supported: U8 (Only if both inputs are U8), S16.
      * @param[in]  window Region on which to execute the kernel.
      */
@@ -78,5 +78,5 @@ private:
     const ITensor   *_input2;
     ITensor         *_output;
 };
-}
+} // namespace arm_compute
 #endif /* __ARM_COMPUTE_NEABSOLUTEDIFFERENCEKERNEL_H__ */

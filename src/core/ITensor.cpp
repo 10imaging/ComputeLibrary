@@ -39,8 +39,8 @@ void ITensor::copy_from(const ITensor &src)
         return;
     }
 
-    const TensorInfo *src_info = src.info();
-    TensorInfo       *dst_info = this->info();
+    const ITensorInfo *src_info = src.info();
+    ITensorInfo       *dst_info = this->info();
 
     ARM_COMPUTE_ERROR_ON(src_info->num_dimensions() > dst_info->num_dimensions());
     ARM_COMPUTE_ERROR_ON(src_info->num_channels() != dst_info->num_channels());
@@ -55,9 +55,9 @@ void ITensor::copy_from(const ITensor &src)
     dst_info->set_valid_region(src_info->valid_region());
 
     Window win_src;
-    win_src.use_tensor_dimensions(src_info, Window::DimY);
+    win_src.use_tensor_dimensions(src_info->tensor_shape(), Window::DimY);
     Window win_dst;
-    win_dst.use_tensor_dimensions(dst_info, Window::DimY);
+    win_dst.use_tensor_dimensions(dst_info->tensor_shape(), Window::DimY);
 
     Iterator src_it(&src, win_src);
     Iterator dst_it(this, win_dst);

@@ -40,8 +40,8 @@
 #include <cstring>
 #include <tuple>
 
-using namespace arm_compute;
-
+namespace arm_compute
+{
 namespace
 {
 const uint16x8_t max_int16 = vdupq_n_u16(INT16_MAX);
@@ -323,9 +323,13 @@ BorderSize             NEConvolutionKernel<matrix_size>::border_size() const
 template <unsigned int matrix_size>
 void NEConvolutionKernel<matrix_size>::configure(const ITensor *input, ITensor *output, const int16_t *conv, uint32_t scale, bool border_undefined)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, output, conv);
+
+    set_shape_if_empty(*output->info(), input->info()->tensor_shape());
+
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, output);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(output, 1, DataType::U8, DataType::S16);
-    ARM_COMPUTE_ERROR_ON(conv == nullptr);
 
     _input  = input;
     _output = output;
@@ -358,7 +362,6 @@ void NEConvolutionKernel<matrix_size>::configure(const ITensor *input, ITensor *
     INEKernel::configure(win);
 }
 
-#ifndef DOXYGEN_SKIP_THIS /* Doxygen gets confused by the templates and can't match the implementation to the declaration */
 template <>
 template <typename OutputType>
 void NEConvolutionKernel<3>::convolution(const Window &win)
@@ -616,11 +619,11 @@ void NEConvolutionKernel<9>::convolution(const Window &win)
     },
     input, output);
 }
-#endif /* DOXYGEN_SKIP_THIS */
 
 template <unsigned int matrix_size>
-void NEConvolutionKernel<matrix_size>::run(const Window &window)
+void NEConvolutionKernel<matrix_size>::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INEKernel::window(), window);
 
@@ -661,9 +664,13 @@ BorderSize             NESeparableConvolutionHorKernel<matrix_size>::border_size
 template <unsigned int matrix_size>
 void NESeparableConvolutionHorKernel<matrix_size>::configure(const ITensor *input, ITensor *output, const int16_t *conv_row, bool border_undefined)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, output, conv_row);
+
+    set_shape_if_empty(*output->info(), input->info()->tensor_shape());
+
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, output);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(output, 1, DataType::U16, DataType::S16, DataType::S32);
-    ARM_COMPUTE_ERROR_ON(conv_row == nullptr);
 
     _input  = input;
     _output = output;
@@ -688,8 +695,9 @@ void NESeparableConvolutionHorKernel<matrix_size>::configure(const ITensor *inpu
 }
 
 template <unsigned int matrix_size>
-void NESeparableConvolutionHorKernel<matrix_size>::run(const Window &window)
+void NESeparableConvolutionHorKernel<matrix_size>::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INEKernel::window(), window);
     switch(_output->info()->data_type())
@@ -709,9 +717,6 @@ void NESeparableConvolutionHorKernel<matrix_size>::run(const Window &window)
     }
 }
 
-#ifndef DOXYGEN_SKIP_THIS /* Doxygen gets confused by the templates and can't match the implementation to the declaration */
-namespace arm_compute
-{
 template <>
 template <>
 inline void NESeparableConvolutionHorKernel<5>::convolve<uint16_t>(const Window &window)
@@ -1076,8 +1081,6 @@ void NESeparableConvolutionHorKernel<9>::convolve<int32_t>(const Window &window)
     },
     input, output);
 }
-} // namespace arm_compute
-#endif
 
 template class arm_compute::NESeparableConvolutionHorKernel<5>;
 template class arm_compute::NESeparableConvolutionHorKernel<7>;
@@ -1098,9 +1101,13 @@ BorderSize             NESeparableConvolutionVertKernel<matrix_size>::border_siz
 template <unsigned int matrix_size>
 void NESeparableConvolutionVertKernel<matrix_size>::configure(const ITensor *input, ITensor *output, const int16_t *conv_col, uint32_t scale, bool border_undefined)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, output, conv_col);
+
+    set_shape_if_empty(*output->info(), input->info()->tensor_shape());
+
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, output);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U16, DataType::S16, DataType::S32);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(output, 1, DataType::U8, DataType::S16);
-    ARM_COMPUTE_ERROR_ON(conv_col == nullptr);
     ARM_COMPUTE_ERROR_ON(scale == 0);
 
     _input  = input;
@@ -1126,8 +1133,9 @@ void NESeparableConvolutionVertKernel<matrix_size>::configure(const ITensor *inp
 }
 
 template <unsigned int matrix_size>
-void NESeparableConvolutionVertKernel<matrix_size>::run(const Window &window)
+void NESeparableConvolutionVertKernel<matrix_size>::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INEKernel::window(), window);
 
@@ -1417,11 +1425,15 @@ BorderSize NEConvolutionRectangleKernel::border_size() const
 
 void NEConvolutionRectangleKernel::configure(const ITensor *input, ITensor *output, const int16_t *conv, uint32_t width, uint32_t height, uint32_t scale, bool border_undefined)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, output, conv);
+
+    set_shape_if_empty(*output->info(), input->info()->tensor_shape());
+
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, output);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(output, 1, DataType::U8, DataType::S16);
-    ARM_COMPUTE_ERROR_ON(nullptr == conv);
-    ARM_COMPUTE_ERROR_ON(3 != width && 5 != width && 7 != width && 9 != width);
-    ARM_COMPUTE_ERROR_ON(3 != height && 5 != height && 7 != height && 9 != height);
+    ARM_COMPUTE_ERROR_ON(width != 3 && width != 5 && width != 7 && width != 9);
+    ARM_COMPUTE_ERROR_ON(height != 3 && height != 5 && height != 7 && height != 9);
     ARM_COMPUTE_ERROR_ON(0 == scale);
 
     _input       = input;
@@ -1455,8 +1467,9 @@ void NEConvolutionRectangleKernel::configure(const ITensor *input, ITensor *outp
     INEKernel::configure(win);
 }
 
-void NEConvolutionRectangleKernel::run(const Window &window)
+void NEConvolutionRectangleKernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INEKernel::window(), window);
 
@@ -1606,3 +1619,4 @@ void NEConvolutionRectangleKernel::convolution(const Window &win)
     },
     input, output);
 }
+} // namespace arm_compute

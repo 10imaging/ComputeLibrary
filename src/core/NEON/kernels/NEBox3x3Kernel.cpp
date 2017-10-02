@@ -34,8 +34,9 @@
 using namespace arm_compute;
 
 #ifdef ARM_COMPUTE_ENABLE_FP16
-void NEBox3x3FP16Kernel::run(const Window &window)
+void NEBox3x3FP16Kernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INESimpleKernel::window(), window);
 
@@ -103,7 +104,7 @@ void NEBox3x3FP16Kernel::run(const Window &window)
     },
     input, output);
 }
-#endif
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
 
 BorderSize NEBox3x3Kernel::border_size() const
 {
@@ -112,8 +113,17 @@ BorderSize NEBox3x3Kernel::border_size() const
 
 void NEBox3x3Kernel::configure(const ITensor *input, ITensor *output, bool border_undefined)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, output);
+
+    set_shape_if_empty(*output->info(), input->info()->tensor_shape());
+
+    set_format_if_unknown(*input->info(), Format::U8);
+    set_format_if_unknown(*output->info(), Format::U8);
+
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, output);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(output, 1, DataType::U8);
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_DATA_TYPES(input, output);
 
     _input  = input;
     _output = output;
@@ -135,8 +145,9 @@ void NEBox3x3Kernel::configure(const ITensor *input, ITensor *output, bool borde
     INEKernel::configure(win);
 }
 
-void NEBox3x3Kernel::run(const Window &window)
+void NEBox3x3Kernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INESimpleKernel::window(), window);
 

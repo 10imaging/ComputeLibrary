@@ -33,6 +33,7 @@
 #include <numeric>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace arm_compute
@@ -77,18 +78,6 @@ std::string build_information();
  */
 std::string read_file(const std::string &filename, bool binary);
 
-/** Return a value as a string
- *
- * @param[in] val Input value.
- *
- * @return Value represented as a string
- */
-template <typename T>
-const std::string val_to_string(T val)
-{
-    return static_cast<const std::ostringstream &>(std::ostringstream() << val).str();
-}
-
 /** The size in bytes of the data type
  *
  * @param[in] data_type Input data type
@@ -101,14 +90,17 @@ inline size_t data_size_from_type(DataType data_type)
     {
         case DataType::U8:
         case DataType::S8:
+        case DataType::QS8:
             return 1;
         case DataType::U16:
         case DataType::S16:
         case DataType::F16:
+        case DataType::QS16:
             return 2;
         case DataType::F32:
         case DataType::U32:
         case DataType::S32:
+        case DataType::QS32:
             return 4;
         case DataType::F64:
         case DataType::U64:
@@ -170,15 +162,19 @@ inline size_t element_size_from_data_type(DataType dt)
 {
     switch(dt)
     {
+        case DataType::S8:
         case DataType::U8:
+        case DataType::QS8:
             return 1;
         case DataType::U16:
         case DataType::S16:
+        case DataType::QS16:
         case DataType::F16:
             return 2;
         case DataType::U32:
         case DataType::S32:
         case DataType::F32:
+        case DataType::QS32:
             return 4;
         default:
             ARM_COMPUTE_ERROR("Undefined element size for given data type");
@@ -536,21 +532,17 @@ inline DataType data_type_for_convolution_matrix(const int16_t *conv, size_t siz
 
 /** Returns expected width and height of output scaled tensor depending on dimensions rounding mode.
  *
- * @param width         Width of input tensor (Number of columns)
- * @param height        Height of input tensor (Number of rows)
- * @param kernel_size   Kernel size.
- * @param stride_x      Stride of the operation in the x dimension.
- * @param stride_y      Stride of the operation in the y dimension.
- * @param pad_x         Padding size in the x dimension.
- * @param pad_y         Padding size in the y dimension.
- * @param round_type    Dimensions rounding mode.
+ * @param[in] width           Width of input tensor (Number of columns)
+ * @param[in] height          Height of input tensor (Number of rows)
+ * @param[in] kernel_width    Kernel width.
+ * @param[in] kernel_height   Kernel height.
+ * @param[in] pad_stride_info Pad and stride information.
  *
  * @return A pair with the new width in the first position and the new height in the second.
  */
-const std::pair<unsigned int, unsigned int> scaled_dimensions(unsigned int width, unsigned int height, unsigned int kernel_size,
-                                                              unsigned int stride_x, unsigned int stride_y,
-                                                              unsigned int pad_x, unsigned int pad_y,
-                                                              DimensionRoundingType round_type);
+const std::pair<unsigned int, unsigned int> scaled_dimensions(unsigned int width, unsigned int height,
+                                                              unsigned int kernel_width, unsigned int kernel_height,
+                                                              const PadStrideInfo &pad_stride_info);
 
 /** Convert a tensor format into a string.
  *
@@ -610,14 +602,34 @@ const std::string &string_from_interpolation_policy(InterpolationPolicy policy);
  * @return The string describing the border mode.
  */
 const std::string &string_from_border_mode(BorderMode border_mode);
+/** Translates a given normalization type to a string.
+ *
+ * @param[in] type @ref NormType to be translated to string.
+ *
+ * @return The string describing the normalization type.
+ */
+const std::string &string_from_norm_type(NormType type);
+/** Translates a given pooling type to a string.
+ *
+ * @param[in] type @ref PoolingType to be translated to string.
+ *
+ * @return The string describing the pooling type.
+ */
+const std::string &string_from_pooling_type(PoolingType type);
 /** Lower a given string.
  *
- * @param val Given string to lower.
+ * @param[in] val Given string to lower.
  *
  * @return The lowered string
  */
-std::string lower_string(std::string val);
+std::string lower_string(const std::string &val);
 
+/** Check if a given data type is of floating point type
+ *
+ * @param[in] dt Input data type.
+ *
+ * @return True if data type is of floating point type, else false.
+ */
 inline bool is_data_type_float(DataType dt)
 {
     switch(dt)
@@ -628,6 +640,39 @@ inline bool is_data_type_float(DataType dt)
         default:
             return false;
     }
+}
+
+/** Check if a given data type is of fixed point type
+ *
+ * @param[in] dt Input data type.
+ *
+ * @return True if data type is of fixed point type, else false.
+ */
+inline bool is_data_type_fixed_point(DataType dt)
+{
+    switch(dt)
+    {
+        case DataType::QS8:
+        case DataType::QS16:
+        case DataType::QS32:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/** Create a string with the float in full precision.
+ *
+ * @param val Floating point value
+ *
+ * @return String with the floating point value.
+ */
+inline std::string float_to_string_with_full_precision(float val)
+{
+    std::stringstream ss;
+    ss.precision(std::numeric_limits<float>::digits10 + 1);
+    ss << val;
+    return ss.str();
 }
 
 /** Print consecutive elements to an output stream.
@@ -641,6 +686,8 @@ inline bool is_data_type_float(DataType dt)
 template <typename T>
 void print_consecutive_elements_impl(std::ostream &s, const T *ptr, unsigned int n, int stream_width = 0, const std::string &element_delim = " ")
 {
+    using print_type = typename std::conditional<std::is_floating_point<T>::value, T, int>::type;
+
     for(unsigned int i = 0; i < n; ++i)
     {
         // Set stream width as it is not a "sticky" stream manipulator
@@ -648,28 +695,29 @@ void print_consecutive_elements_impl(std::ostream &s, const T *ptr, unsigned int
         {
             s.width(stream_width);
         }
-        s << std::right << ptr[i] << element_delim;
+        s << std::right << static_cast<print_type>(ptr[i]) << element_delim;
     }
 }
 
 /** Identify the maximum width of n consecutive elements.
  *
- * @param[in] s The output stream which will be used to print the elements. Used to extract the stream format.
- *
- * @param ptr    Pointer to the elements.
- * @param n      Number of elements.
+ * @param[in] s   The output stream which will be used to print the elements. Used to extract the stream format.
+ * @param[in] ptr Pointer to the elements.
+ * @param[in] n   Number of elements.
  *
  * @return The maximum width of the elements.
  */
 template <typename T>
 int max_consecutive_elements_display_width_impl(std::ostream &s, const T *ptr, unsigned int n)
 {
+    using print_type = typename std::conditional<std::is_floating_point<T>::value, T, int>::type;
+
     int max_width = -1;
     for(unsigned int i = 0; i < n; ++i)
     {
         std::stringstream ss;
         ss.copyfmt(s);
-        ss << ptr[i];
+        ss << static_cast<print_type>(ptr[i]);
         max_width = std::max<int>(max_width, ss.str().size());
     }
     return max_width;

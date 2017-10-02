@@ -47,14 +47,14 @@ public:
     NETableLookupKernel &operator=(NETableLookupKernel &&) = default;
     /** Initialise the kernel's input, lut and output.
      *
-     * @param[in]  input  An input tensor. Data types supported: U8, S16.
+     * @param[in]  input  An input tensor. Data types supported: U8/S16.
      * @param[in]  lut    The input LUT.
      * @param[out] output The output tensor. Data types supported: same as @p input
      */
     void configure(const ITensor *input, const ILut *lut, ITensor *output);
 
     // Inherited methods overridden:
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
 
 private:
     /** Perform table lookup on a given window.
@@ -72,5 +72,5 @@ private:
     TableLookupFunction _func;
     const ILut         *_lut;
 };
-}
+} // namespace arm_compute
 #endif /* __ARM_COMPUTE_NETABLELOOKUPKERNEL_H__ */

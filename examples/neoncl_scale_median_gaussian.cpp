@@ -21,15 +21,18 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#define ARM_COMPUTE_CL /* So that OpenCL exceptions get caught too */
+#ifndef ARM_COMPUTE_CL /* Needed by Utils.cpp to handle OpenCL exceptions properly */
+#error "This example needs to be built with -DARM_COMPUTE_CL"
+#endif /* ARM_COMPUTE_CL */
+
 #include "arm_compute/core/Types.h"
 #include "arm_compute/runtime/CL/CLFunctions.h"
 #include "arm_compute/runtime/CL/CLScheduler.h"
 #include "arm_compute/runtime/NEON/NEFunctions.h"
-#include "test_helpers/Utils.h"
+#include "utils/Utils.h"
 
 using namespace arm_compute;
-using namespace test_helpers;
+using namespace utils;
 
 /** Example demonstrating how to use both CL and NEON functions in the same pipeline
  *
@@ -122,5 +125,5 @@ void main_neoncl_scale_median_gaussian(int argc, const char **argv)
  */
 int main(int argc, const char **argv)
 {
-    return test_helpers::run_example(argc, argv, main_neoncl_scale_median_gaussian);
+    return utils::run_example(argc, argv, main_neoncl_scale_median_gaussian);
 }

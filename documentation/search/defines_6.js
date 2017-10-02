@@ -1,4 +1,4 @@
 var searchData=
 [
-  ['image_5fdeclaration',['IMAGE_DECLARATION',['../helpers_8h.xhtml#a22f42fcf2077d951271df83b55c1a71a',1,'helpers.h']]]
+  ['gpu_5fmax_5fjob_5fslots',['GPU_MAX_JOB_SLOTS',['../hwc_8hpp.xhtml#aa6dbd48b180e4ae2949aab4ce28eadf0',1,'hwc.hpp']]]
 ];

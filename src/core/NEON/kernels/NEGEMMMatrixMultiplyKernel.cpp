@@ -23,9 +23,13 @@
  */
 #include "arm_compute/core/NEON/kernels/NEGEMMMatrixMultiplyKernel.h"
 
+#include "arm_compute/core/AccessWindowStatic.h"
+#include "arm_compute/core/AccessWindowTranspose.h"
 #include "arm_compute/core/Error.h"
 #include "arm_compute/core/Helpers.h"
+#include "arm_compute/core/IAccessWindow.h"
 #include "arm_compute/core/ITensor.h"
+#include "arm_compute/core/NEON/NEFixedPoint.h"
 #include "arm_compute/core/TensorInfo.h"
 #include "arm_compute/core/Types.h"
 #include "arm_compute/core/Utils.h"
@@ -47,16 +51,18 @@ class Coordinates;
 namespace
 {
 template <bool multiply_alpha>
-void vector_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, float alpha)
+void vector_matrix_multiply_f16(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, const ThreadInfo &info, float alpha)
 {
+#ifdef ARM_COMPUTE_ENABLE_FP16
     const auto width_matrix_b  = static_cast<int>(output->info()->dimension(0));
     const auto in_b_stride     = static_cast<int>(input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type()));
     const auto num_elems_vec_a = static_cast<int>(input0->info()->dimension(0));
 
-    const int window_start_x = 16 * window.thread_id();
-    const int window_step_x  = 16 * window.num_threads();
-    // Make sure (window_end_x - window_start_x) is a multiple of window_step_x
-    const int window_end_x = width_matrix_b + (window_step_x - ((width_matrix_b - window_start_x) % window_step_x)) % window_step_x;
+    // The implementation computes 32 elements per iteration
+    const int window_start_x = 32 * info.thread_id;
+    const int window_step_x  = 32 * info.num_threads;
+    const int window_end_x   = ceil_to_multiple(width_matrix_b - window_start_x, window_step_x) + window_start_x;
+    ARM_COMPUTE_ERROR_ON_MSG((window_end_x - window_start_x) % window_step_x, " (window_end_x - window_start_x) must be multiple of window_step_x");
 
     Window win_out(window);
     win_out.set(Window::DimX, Window::Dimension(window_start_x, window_end_x, window_step_x));
@@ -80,7 +86,151 @@ void vector_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
     Iterator inb(input1, win_b);
     Iterator out(output, win_out);
 
-    const auto vec_a = reinterpret_cast<const float *>(ina.ptr());
+    const float16x8_t alpha_f16 = vdupq_n_f16(alpha);
+    ARM_COMPUTE_UNUSED(alpha_f16);
+
+    execute_window_loop(win_out, [&](const Coordinates & id)
+    {
+        if(id.x() > width_matrix_b)
+        {
+            return;
+        }
+
+        float16x8_t acc0 = vdupq_n_f16(0.f);
+        float16x8_t acc1 = vdupq_n_f16(0.f);
+        float16x8_t acc2 = vdupq_n_f16(0.f);
+        float16x8_t acc3 = vdupq_n_f16(0.f);
+
+        auto vec_a    = reinterpret_cast<const float16_t *>(ina.ptr());
+        auto matrix_b = reinterpret_cast<const float16_t *>(inb.ptr());
+
+        const float16_t *vec_a_end_addr = vec_a + num_elems_vec_a;
+        for(; vec_a <= (vec_a_end_addr - 4);)
+        {
+            const float16x4_t a0l = vld1_f16(vec_a);
+
+            float16x8_t b00 = vld1q_f16(matrix_b + 0 + 0 * in_b_stride);
+            float16x8_t b01 = vld1q_f16(matrix_b + 8 + 0 * in_b_stride);
+            float16x8_t b02 = vld1q_f16(matrix_b + 16 + 0 * in_b_stride);
+            float16x8_t b03 = vld1q_f16(matrix_b + 24 + 0 * in_b_stride);
+            float16x8_t b10 = vld1q_f16(matrix_b + 0 + 1 * in_b_stride);
+            float16x8_t b11 = vld1q_f16(matrix_b + 8 + 1 * in_b_stride);
+            float16x8_t b12 = vld1q_f16(matrix_b + 16 + 1 * in_b_stride);
+            float16x8_t b13 = vld1q_f16(matrix_b + 24 + 1 * in_b_stride);
+
+            acc0 = vaddq_f16(acc0, vmulq_lane_f16(b00, a0l, 0));
+            acc1 = vaddq_f16(acc1, vmulq_lane_f16(b01, a0l, 0));
+            acc2 = vaddq_f16(acc2, vmulq_lane_f16(b02, a0l, 0));
+            acc3 = vaddq_f16(acc3, vmulq_lane_f16(b03, a0l, 0));
+            acc0 = vaddq_f16(acc0, vmulq_lane_f16(b10, a0l, 1));
+            acc1 = vaddq_f16(acc1, vmulq_lane_f16(b11, a0l, 1));
+            acc2 = vaddq_f16(acc2, vmulq_lane_f16(b12, a0l, 1));
+            acc3 = vaddq_f16(acc3, vmulq_lane_f16(b13, a0l, 1));
+
+            matrix_b += 2 * in_b_stride;
+
+            b00 = vld1q_f16(matrix_b + 0 + 0 * in_b_stride);
+            b01 = vld1q_f16(matrix_b + 8 + 0 * in_b_stride);
+            b02 = vld1q_f16(matrix_b + 16 + 0 * in_b_stride);
+            b03 = vld1q_f16(matrix_b + 24 + 0 * in_b_stride);
+            b10 = vld1q_f16(matrix_b + 0 + 1 * in_b_stride);
+            b11 = vld1q_f16(matrix_b + 8 + 1 * in_b_stride);
+            b12 = vld1q_f16(matrix_b + 16 + 1 * in_b_stride);
+            b13 = vld1q_f16(matrix_b + 24 + 1 * in_b_stride);
+
+            acc0 = vaddq_f16(acc0, vmulq_lane_f16(b00, a0l, 2));
+            acc1 = vaddq_f16(acc1, vmulq_lane_f16(b01, a0l, 2));
+            acc2 = vaddq_f16(acc2, vmulq_lane_f16(b02, a0l, 2));
+            acc3 = vaddq_f16(acc3, vmulq_lane_f16(b03, a0l, 2));
+            acc0 = vaddq_f16(acc0, vmulq_lane_f16(b10, a0l, 3));
+            acc1 = vaddq_f16(acc1, vmulq_lane_f16(b11, a0l, 3));
+            acc2 = vaddq_f16(acc2, vmulq_lane_f16(b12, a0l, 3));
+            acc3 = vaddq_f16(acc3, vmulq_lane_f16(b13, a0l, 3));
+
+            vec_a += 4;
+            matrix_b += 2 * in_b_stride;
+        }
+
+        for(; vec_a < vec_a_end_addr;)
+        {
+            const float16_t   a0  = *vec_a;
+            const float16x8_t b00 = vld1q_f16(matrix_b + 0 + 0 * in_b_stride);
+            const float16x8_t b01 = vld1q_f16(matrix_b + 8 + 0 * in_b_stride);
+            const float16x8_t b02 = vld1q_f16(matrix_b + 16 + 0 * in_b_stride);
+            const float16x8_t b03 = vld1q_f16(matrix_b + 24 + 0 * in_b_stride);
+
+            acc0 = vaddq_f16(acc0, vmulq_n_f16(b00, a0));
+            acc1 = vaddq_f16(acc1, vmulq_n_f16(b01, a0));
+            acc2 = vaddq_f16(acc2, vmulq_n_f16(b02, a0));
+            acc3 = vaddq_f16(acc3, vmulq_n_f16(b03, a0));
+
+            vec_a += 1;
+            matrix_b += in_b_stride;
+        }
+
+        // Multiply by the weight of matrix product (alpha)
+        if(multiply_alpha)
+        {
+            acc0 = vmulq_f16(acc0, alpha_f16);
+            acc1 = vmulq_f16(acc1, alpha_f16);
+            acc2 = vmulq_f16(acc2, alpha_f16);
+            acc3 = vmulq_f16(acc3, alpha_f16);
+        }
+
+        const auto vec_out = reinterpret_cast<float16_t *>(out.ptr());
+
+        vst1q_f16(vec_out + 0, acc0);
+        vst1q_f16(vec_out + 8, acc1);
+        vst1q_f16(vec_out + 16, acc2);
+        vst1q_f16(vec_out + 24, acc3);
+
+    },
+    ina, inb, out);
+#else  /* ARM_COMPUTE_ENABLE_FP16 */
+    ARM_COMPUTE_UNUSED(input0);
+    ARM_COMPUTE_UNUSED(input1);
+    ARM_COMPUTE_UNUSED(output);
+    ARM_COMPUTE_UNUSED(window);
+    ARM_COMPUTE_UNUSED(info);
+    ARM_COMPUTE_UNUSED(alpha);
+    ARM_COMPUTE_ERROR("Not implemented");
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
+}
+
+template <bool multiply_alpha>
+void vector_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, const ThreadInfo &info, float alpha)
+{
+    const auto width_matrix_b  = static_cast<int>(output->info()->dimension(0));
+    const auto in_b_stride     = static_cast<int>(input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type()));
+    const auto num_elems_vec_a = static_cast<int>(input0->info()->dimension(0));
+
+    // The implementation computes 16 elements per iteration
+    const int window_start_x = 16 * info.thread_id;
+    const int window_step_x  = 16 * info.num_threads;
+    // Make sure (window_end_x - window_start_x) is a multiple of window_step_x
+    const int window_end_x = ceil_to_multiple(width_matrix_b - window_start_x, window_step_x) + window_start_x;
+
+    Window win_out(window);
+    win_out.set(Window::DimX, Window::Dimension(window_start_x, window_end_x, window_step_x));
+    win_out.set(Window::DimY, Window::Dimension(0, 1, 1));
+
+    Window win_a(window);
+    win_a.set(Window::DimX, Window::Dimension(0, 0, 0));
+    win_a.set(Window::DimY, Window::Dimension(0, 0, 0));
+
+    Window win_b;
+    // Don't slice matrix B along the z dimension if matrix B has just 2 dimensions and matrix A more than 2
+    // This scenario can happen when the the matrix multiplication is used to perform a convolution operation
+    if(input1->info()->num_dimensions() >= 3)
+    {
+        win_b = window;
+    }
+    win_b.set(Window::DimX, Window::Dimension(window_start_x, window_end_x, window_step_x));
+    win_b.set(Window::DimY, Window::Dimension(0, 1, 1));
+
+    Iterator ina(input0, win_a);
+    Iterator inb(input1, win_b);
+    Iterator out(output, win_out);
 
     execute_window_loop(win_out, [&](const Coordinates & id)
     {
@@ -94,33 +244,37 @@ void vector_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
         float32x4_t acc2 = vdupq_n_f32(0.f);
         float32x4_t acc3 = vdupq_n_f32(0.f);
 
-        const auto matrix_b = reinterpret_cast<const float *>(inb.ptr());
+        auto vec_a    = reinterpret_cast<const float *>(ina.ptr());
+        auto matrix_b = reinterpret_cast<const float *>(inb.ptr());
 
-        int i = 0;
-        for(; i <= (num_elems_vec_a - 4); i += 4)
+#if __arm__
+        asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(vec_a)));
+        asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(matrix_b)));
+        asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(matrix_b + in_b_stride)));
+#endif /* __arm__ */
+
+        auto vec_a_end_addr = vec_a + num_elems_vec_a;
+        for(; vec_a <= (vec_a_end_addr - 4);)
         {
-            const float32x2_t a0l = vld1_f32(&vec_a[i]);
-            const float32x2_t a0h = vld1_f32(&vec_a[i] + 2);
+            float32x2_t a0l = vld1_f32(vec_a);
 
-            const float32x4_t b00 = vld1q_f32(&matrix_b[0 + (i + 0) * in_b_stride]);
-            const float32x4_t b01 = vld1q_f32(&matrix_b[4 + (i + 0) * in_b_stride]);
-            const float32x4_t b02 = vld1q_f32(&matrix_b[8 + (i + 0) * in_b_stride]);
-            const float32x4_t b03 = vld1q_f32(&matrix_b[12 + (i + 0) * in_b_stride]);
+            float32x4_t b00 = vld1q_f32(matrix_b + 0 + 0 * in_b_stride);
+            float32x4_t b01 = vld1q_f32(matrix_b + 4 + 0 * in_b_stride);
+            float32x4_t b02 = vld1q_f32(matrix_b + 8 + 0 * in_b_stride);
+            float32x4_t b03 = vld1q_f32(matrix_b + 12 + 0 * in_b_stride);
 
-            const float32x4_t b10 = vld1q_f32(&matrix_b[0 + (i + 1) * in_b_stride]);
-            const float32x4_t b11 = vld1q_f32(&matrix_b[4 + (i + 1) * in_b_stride]);
-            const float32x4_t b12 = vld1q_f32(&matrix_b[8 + (i + 1) * in_b_stride]);
-            const float32x4_t b13 = vld1q_f32(&matrix_b[12 + (i + 1) * in_b_stride]);
+            float32x4_t b10 = vld1q_f32(matrix_b + 0 + 1 * in_b_stride);
+            float32x4_t b11 = vld1q_f32(matrix_b + 4 + 1 * in_b_stride);
+            float32x4_t b12 = vld1q_f32(matrix_b + 8 + 1 * in_b_stride);
+            float32x4_t b13 = vld1q_f32(matrix_b + 12 + 1 * in_b_stride);
 
-            const float32x4_t b20 = vld1q_f32(&matrix_b[0 + (i + 2) * in_b_stride]);
-            const float32x4_t b21 = vld1q_f32(&matrix_b[4 + (i + 2) * in_b_stride]);
-            const float32x4_t b22 = vld1q_f32(&matrix_b[8 + (i + 2) * in_b_stride]);
-            const float32x4_t b23 = vld1q_f32(&matrix_b[12 + (i + 2) * in_b_stride]);
-
-            const float32x4_t b30 = vld1q_f32(&matrix_b[0 + (i + 3) * in_b_stride]);
-            const float32x4_t b31 = vld1q_f32(&matrix_b[4 + (i + 3) * in_b_stride]);
-            const float32x4_t b32 = vld1q_f32(&matrix_b[8 + (i + 3) * in_b_stride]);
-            const float32x4_t b33 = vld1q_f32(&matrix_b[12 + (i + 3) * in_b_stride]);
+#if __arm__
+            asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(vec_a)));
+            asm volatile("PLD [%0, #128*1]" ::"r"(reinterpret_cast<const uint8_t *>(matrix_b + 1 * in_b_stride)));
+            asm volatile("PLD [%0, #128*1]" ::"r"(reinterpret_cast<const uint8_t *>(matrix_b + 2 * in_b_stride)));
+            asm volatile("PLD [%0, #128*1]" ::"r"(reinterpret_cast<const uint8_t *>(matrix_b + 3 * in_b_stride)));
+            asm volatile("PLD [%0, #128*1]" ::"r"(reinterpret_cast<const uint8_t *>(matrix_b + 4 * in_b_stride)));
+#endif /* __arm__ */
 
             acc0 = vmlaq_lane_f32(acc0, b00, a0l, 0);
             acc1 = vmlaq_lane_f32(acc1, b01, a0l, 0);
@@ -132,30 +286,51 @@ void vector_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
             acc2 = vmlaq_lane_f32(acc2, b12, a0l, 1);
             acc3 = vmlaq_lane_f32(acc3, b13, a0l, 1);
 
-            acc0 = vmlaq_lane_f32(acc0, b20, a0h, 0);
-            acc1 = vmlaq_lane_f32(acc1, b21, a0h, 0);
-            acc2 = vmlaq_lane_f32(acc2, b22, a0h, 0);
-            acc3 = vmlaq_lane_f32(acc3, b23, a0h, 0);
+            vec_a += 2;
+            matrix_b += 2 * in_b_stride;
 
-            acc0 = vmlaq_lane_f32(acc0, b30, a0h, 1);
-            acc1 = vmlaq_lane_f32(acc1, b31, a0h, 1);
-            acc2 = vmlaq_lane_f32(acc2, b32, a0h, 1);
-            acc3 = vmlaq_lane_f32(acc3, b33, a0h, 1);
+            a0l = vld1_f32(vec_a);
+
+            b00 = vld1q_f32(matrix_b + 0 + 0 * in_b_stride);
+            b01 = vld1q_f32(matrix_b + 4 + 0 * in_b_stride);
+            b02 = vld1q_f32(matrix_b + 8 + 0 * in_b_stride);
+            b03 = vld1q_f32(matrix_b + 12 + 0 * in_b_stride);
+
+            b10 = vld1q_f32(matrix_b + 0 + 1 * in_b_stride);
+            b11 = vld1q_f32(matrix_b + 4 + 1 * in_b_stride);
+            b12 = vld1q_f32(matrix_b + 8 + 1 * in_b_stride);
+            b13 = vld1q_f32(matrix_b + 12 + 1 * in_b_stride);
+
+            acc0 = vmlaq_lane_f32(acc0, b00, a0l, 0);
+            acc1 = vmlaq_lane_f32(acc1, b01, a0l, 0);
+            acc2 = vmlaq_lane_f32(acc2, b02, a0l, 0);
+            acc3 = vmlaq_lane_f32(acc3, b03, a0l, 0);
+
+            acc0 = vmlaq_lane_f32(acc0, b10, a0l, 1);
+            acc1 = vmlaq_lane_f32(acc1, b11, a0l, 1);
+            acc2 = vmlaq_lane_f32(acc2, b12, a0l, 1);
+            acc3 = vmlaq_lane_f32(acc3, b13, a0l, 1);
+
+            vec_a += 2;
+            matrix_b += 2 * in_b_stride;
         }
 
-        for(; i < num_elems_vec_a; i++)
+        for(; vec_a < vec_a_end_addr;)
         {
-            const float a0 = vec_a[i];
+            const float a0 = *vec_a;
 
-            const float32x4_t b00 = vld1q_f32(&matrix_b[0 + i * in_b_stride]);
-            const float32x4_t b01 = vld1q_f32(&matrix_b[4 + i * in_b_stride]);
-            const float32x4_t b02 = vld1q_f32(&matrix_b[8 + i * in_b_stride]);
-            const float32x4_t b03 = vld1q_f32(&matrix_b[12 + i * in_b_stride]);
+            const float32x4_t b00 = vld1q_f32(matrix_b + 0 + 0 * in_b_stride);
+            const float32x4_t b01 = vld1q_f32(matrix_b + 4 + 0 * in_b_stride);
+            const float32x4_t b02 = vld1q_f32(matrix_b + 8 + 0 * in_b_stride);
+            const float32x4_t b03 = vld1q_f32(matrix_b + 12 + 0 * in_b_stride);
 
             acc0 = vmlaq_n_f32(acc0, b00, a0);
             acc1 = vmlaq_n_f32(acc1, b01, a0);
             acc2 = vmlaq_n_f32(acc2, b02, a0);
             acc3 = vmlaq_n_f32(acc3, b03, a0);
+
+            vec_a += 1;
+            matrix_b += in_b_stride;
         }
 
         // Multiply by the weight of matrix product (alpha)
@@ -170,12 +345,269 @@ void vector_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
 
         const auto vec_out = reinterpret_cast<float *>(out.ptr());
 
-        vst1q_f32(&vec_out[0], acc0);
-        vst1q_f32(&vec_out[4], acc1);
-        vst1q_f32(&vec_out[8], acc2);
-        vst1q_f32(&vec_out[12], acc3);
+        vst1q_f32(vec_out + 0, acc0);
+        vst1q_f32(vec_out + 4, acc1);
+        vst1q_f32(vec_out + 8, acc2);
+        vst1q_f32(vec_out + 12, acc3);
     },
-    inb, out);
+    ina, inb, out);
+}
+
+template <bool multiply_alpha>
+void vector_matrix_multiply_qs8(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, const ThreadInfo &info, float alpha)
+{
+    const auto width_matrix_b       = static_cast<int>(output->info()->dimension(0));
+    const auto in_b_stride          = static_cast<int>(input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type()));
+    const auto num_elems_vec_a      = static_cast<int>(input0->info()->dimension(0));
+    const int  fixed_point_position = input0->info()->fixed_point_position();
+
+    // The implementation computes 32 elements per iteration
+    const int window_start_x = 32 * info.thread_id;
+    const int window_step_x  = 32 * info.num_threads;
+    // Make sure (window_end_x - window_start_x) is a multiple of window_step_x
+    const int window_end_x = ceil_to_multiple(width_matrix_b - window_start_x, window_step_x) + window_start_x;
+
+    Window win_out(window);
+    win_out.set(Window::DimX, Window::Dimension(window_start_x, window_end_x, window_step_x));
+    win_out.set(Window::DimY, Window::Dimension(0, 1, 1));
+
+    Window win_a(window);
+    win_a.set(Window::DimX, Window::Dimension(0, 0, 0));
+    win_a.set(Window::DimY, Window::Dimension(0, 0, 0));
+
+    Window win_b;
+    // Don't slice matrix B along the z dimension if matrix B has just 2 dimensions and matrix A more than 2
+    // This scenario can happen when the the matrix multiplication is used to perform a convolution operation
+    if(input1->info()->num_dimensions() >= 3)
+    {
+        win_b = window;
+    }
+    win_b.set(Window::DimX, Window::Dimension(window_start_x, window_end_x, window_step_x));
+    win_b.set(Window::DimY, Window::Dimension(0, 1, 1));
+
+    Iterator ina(input0, win_a);
+    Iterator inb(input1, win_b);
+    Iterator out(output, win_out);
+
+    execute_window_loop(win_out, [&](const Coordinates & id)
+    {
+        if(id.x() > width_matrix_b)
+        {
+            return;
+        }
+
+        // Reset accumulators
+        qint16x8_t acc00_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc01_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc02_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc03_qs16 = vdupq_n_qs16(0);
+
+        auto vec_a    = reinterpret_cast<const qint8_t *>(ina.ptr());
+        auto matrix_b = reinterpret_cast<const qint8_t *>(inb.ptr());
+
+        auto vec_a_end_addr = vec_a + num_elems_vec_a;
+        for(; vec_a <= (vec_a_end_addr - 2);)
+        {
+            const qint8x8_t a0 = vld1_dup_qs8(vec_a + 0);
+            const qint8x8_t a1 = vld1_dup_qs8(vec_a + 1);
+
+            const qint8x8_t b00 = vld1_qs8(matrix_b + 0 + 0 * in_b_stride);
+            const qint8x8_t b01 = vld1_qs8(matrix_b + 8 + 0 * in_b_stride);
+            const qint8x8_t b02 = vld1_qs8(matrix_b + 16 + 0 * in_b_stride);
+            const qint8x8_t b03 = vld1_qs8(matrix_b + 24 + 0 * in_b_stride);
+            const qint8x8_t b10 = vld1_qs8(matrix_b + 0 + 1 * in_b_stride);
+            const qint8x8_t b11 = vld1_qs8(matrix_b + 8 + 1 * in_b_stride);
+            const qint8x8_t b12 = vld1_qs8(matrix_b + 16 + 1 * in_b_stride);
+            const qint8x8_t b13 = vld1_qs8(matrix_b + 24 + 1 * in_b_stride);
+
+            // First accumulation
+            acc00_qs16 = vqmlal_qs8(acc00_qs16, b00, a0, fixed_point_position);
+            acc01_qs16 = vqmlal_qs8(acc01_qs16, b01, a0, fixed_point_position);
+            acc02_qs16 = vqmlal_qs8(acc02_qs16, b02, a0, fixed_point_position);
+            acc03_qs16 = vqmlal_qs8(acc03_qs16, b03, a0, fixed_point_position);
+
+            // Second accumulation
+            acc00_qs16 = vqmlal_qs8(acc00_qs16, b10, a1, fixed_point_position);
+            acc01_qs16 = vqmlal_qs8(acc01_qs16, b11, a1, fixed_point_position);
+            acc02_qs16 = vqmlal_qs8(acc02_qs16, b12, a1, fixed_point_position);
+            acc03_qs16 = vqmlal_qs8(acc03_qs16, b13, a1, fixed_point_position);
+
+            vec_a += 2;
+            matrix_b += 2 * in_b_stride;
+        }
+
+        for(; vec_a < vec_a_end_addr;)
+        {
+            const qint8x8_t a0 = vld1_dup_qs8(vec_a);
+
+            const qint8x8_t b00 = vld1_qs8(matrix_b + 0);
+            const qint8x8_t b01 = vld1_qs8(matrix_b + 8);
+            const qint8x8_t b02 = vld1_qs8(matrix_b + 16);
+            const qint8x8_t b03 = vld1_qs8(matrix_b + 24);
+
+            acc00_qs16 = vqmlal_qs8(acc00_qs16, b00, a0, fixed_point_position);
+            acc01_qs16 = vqmlal_qs8(acc01_qs16, b01, a0, fixed_point_position);
+            acc02_qs16 = vqmlal_qs8(acc02_qs16, b02, a0, fixed_point_position);
+            acc03_qs16 = vqmlal_qs8(acc03_qs16, b03, a0, fixed_point_position);
+
+            vec_a += 1;
+            matrix_b += in_b_stride;
+        }
+
+        // Convert back to qint8x8_t and saturate
+        qint8x8_t acc00_qs8 = vqmovn_qs16(acc00_qs16);
+        qint8x8_t acc01_qs8 = vqmovn_qs16(acc01_qs16);
+        qint8x8_t acc02_qs8 = vqmovn_qs16(acc02_qs16);
+        qint8x8_t acc03_qs8 = vqmovn_qs16(acc03_qs16);
+
+        // Multiply by the weight of the matrix product (alpha)
+        if(multiply_alpha)
+        {
+            const qint8x8_t alpha_qs8 = vdup_n_qs8(sqcvt_qs8_f32(alpha, fixed_point_position));
+            acc00_qs8                 = vqmul_qs8(acc00_qs8, alpha_qs8, fixed_point_position);
+            acc01_qs8                 = vqmul_qs8(acc01_qs8, alpha_qs8, fixed_point_position);
+            acc02_qs8                 = vqmul_qs8(acc02_qs8, alpha_qs8, fixed_point_position);
+            acc03_qs8                 = vqmul_qs8(acc03_qs8, alpha_qs8, fixed_point_position);
+        }
+
+        const auto mtx_out0 = reinterpret_cast<qint8_t *>(out.ptr());
+
+        // Store 8x4 output elements
+        vst1_qs8(mtx_out0 + 0, acc00_qs8);
+        vst1_qs8(mtx_out0 + 8, acc01_qs8);
+        vst1_qs8(mtx_out0 + 16, acc02_qs8);
+        vst1_qs8(mtx_out0 + 24, acc03_qs8);
+    },
+    ina, inb, out);
+}
+
+template <bool multiply_alpha>
+void vector_matrix_multiply_qs16(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, const ThreadInfo &info, float alpha)
+{
+    const auto width_matrix_b       = static_cast<int>(output->info()->dimension(0));
+    const auto in_b_stride          = static_cast<int>(input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type()));
+    const auto num_elems_vec_a      = static_cast<int>(input0->info()->dimension(0));
+    const int  fixed_point_position = input0->info()->fixed_point_position();
+
+    // The implementation computes 16 elements per iteration
+    const int window_start_x = 16 * info.thread_id;
+    const int window_step_x  = 16 * info.num_threads;
+    // Make sure (window_end_x - window_start_x) is a multiple of window_step_x
+    const int window_end_x = ceil_to_multiple(width_matrix_b - window_start_x, window_step_x) + window_start_x;
+    ARM_COMPUTE_ERROR_ON_MSG((window_end_x - window_start_x) % window_step_x, " (window_end_x - window_start_x) must be multiple of window_step_x");
+
+    Window win_out(window);
+    win_out.set(Window::DimX, Window::Dimension(window_start_x, window_end_x, window_step_x));
+    win_out.set(Window::DimY, Window::Dimension(0, 1, 1));
+
+    Window win_a(window);
+    win_a.set(Window::DimX, Window::Dimension(0, 0, 0));
+    win_a.set(Window::DimY, Window::Dimension(0, 0, 0));
+
+    Window win_b;
+    // Don't slice matrix B along the z dimension if matrix B has just 2 dimensions and matrix A more than 2
+    // This scenario can happen when the the matrix multiplication is used to perform a convolution operation
+    if(input1->info()->num_dimensions() >= 3)
+    {
+        win_b = window;
+    }
+    win_b.set(Window::DimX, Window::Dimension(window_start_x, window_end_x, window_step_x));
+    win_b.set(Window::DimY, Window::Dimension(0, 1, 1));
+
+    Iterator ina(input0, win_a);
+    Iterator inb(input1, win_b);
+    Iterator out(output, win_out);
+
+    execute_window_loop(win_out, [&](const Coordinates & id)
+    {
+        if(id.x() > width_matrix_b)
+        {
+            return;
+        }
+
+        // Reset accumulators
+        qint32x4_t acc00_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc01_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc02_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc03_qs32 = vdupq_n_qs32(0);
+
+        auto vec_a    = reinterpret_cast<const qint16_t *>(ina.ptr());
+        auto matrix_b = reinterpret_cast<const qint16_t *>(inb.ptr());
+
+        auto vec_a_end_addr = vec_a + num_elems_vec_a;
+        for(; vec_a <= (vec_a_end_addr - 2);)
+        {
+            const qint16x4_t a0 = vld1_dup_qs16(vec_a + 0);
+            const qint16x4_t a1 = vld1_dup_qs16(vec_a + 1);
+
+            const qint16x4_t b00 = vld1_qs16(matrix_b + 0 + 0 * in_b_stride);
+            const qint16x4_t b01 = vld1_qs16(matrix_b + 4 + 0 * in_b_stride);
+            const qint16x4_t b02 = vld1_qs16(matrix_b + 8 + 0 * in_b_stride);
+            const qint16x4_t b03 = vld1_qs16(matrix_b + 12 + 0 * in_b_stride);
+            const qint16x4_t b10 = vld1_qs16(matrix_b + 0 + 1 * in_b_stride);
+            const qint16x4_t b11 = vld1_qs16(matrix_b + 4 + 1 * in_b_stride);
+            const qint16x4_t b12 = vld1_qs16(matrix_b + 8 + 1 * in_b_stride);
+            const qint16x4_t b13 = vld1_qs16(matrix_b + 12 + 1 * in_b_stride);
+
+            // First accumulation
+            acc00_qs32 = vqmlal_qs16(acc00_qs32, b00, a0, fixed_point_position);
+            acc01_qs32 = vqmlal_qs16(acc01_qs32, b01, a0, fixed_point_position);
+            acc02_qs32 = vqmlal_qs16(acc02_qs32, b02, a0, fixed_point_position);
+            acc03_qs32 = vqmlal_qs16(acc03_qs32, b03, a0, fixed_point_position);
+
+            // Second accumulation
+            acc00_qs32 = vqmlal_qs16(acc00_qs32, b10, a1, fixed_point_position);
+            acc01_qs32 = vqmlal_qs16(acc01_qs32, b11, a1, fixed_point_position);
+            acc02_qs32 = vqmlal_qs16(acc02_qs32, b12, a1, fixed_point_position);
+            acc03_qs32 = vqmlal_qs16(acc03_qs32, b13, a1, fixed_point_position);
+
+            vec_a += 2;
+            matrix_b += 2 * in_b_stride;
+        }
+
+        for(; vec_a < vec_a_end_addr;)
+        {
+            const qint16x4_t a0 = vld1_dup_qs16(vec_a);
+
+            const qint16x4_t b00 = vld1_qs16(matrix_b + 0);
+            const qint16x4_t b01 = vld1_qs16(matrix_b + 4);
+            const qint16x4_t b02 = vld1_qs16(matrix_b + 8);
+            const qint16x4_t b03 = vld1_qs16(matrix_b + 12);
+
+            acc00_qs32 = vqmlal_qs16(acc00_qs32, b00, a0, fixed_point_position);
+            acc01_qs32 = vqmlal_qs16(acc01_qs32, b01, a0, fixed_point_position);
+            acc02_qs32 = vqmlal_qs16(acc02_qs32, b02, a0, fixed_point_position);
+            acc03_qs32 = vqmlal_qs16(acc03_qs32, b03, a0, fixed_point_position);
+
+            vec_a += 1;
+            matrix_b += in_b_stride;
+        }
+
+        // Convert back to qint16x4_t and saturate
+        qint16x4_t acc00_qs16 = vqmovn_qs32(acc00_qs32);
+        qint16x4_t acc01_qs16 = vqmovn_qs32(acc01_qs32);
+        qint16x4_t acc02_qs16 = vqmovn_qs32(acc02_qs32);
+        qint16x4_t acc03_qs16 = vqmovn_qs32(acc03_qs32);
+
+        // Multiply by the weight of the matrix product (alpha)
+        if(multiply_alpha)
+        {
+            const qint16x4_t alpha_qs16 = vdup_n_qs16(sqcvt_qs16_f32(alpha, fixed_point_position));
+            acc00_qs16                  = vqmul_qs16(acc00_qs16, alpha_qs16, fixed_point_position);
+            acc01_qs16                  = vqmul_qs16(acc01_qs16, alpha_qs16, fixed_point_position);
+            acc02_qs16                  = vqmul_qs16(acc02_qs16, alpha_qs16, fixed_point_position);
+            acc03_qs16                  = vqmul_qs16(acc03_qs16, alpha_qs16, fixed_point_position);
+        }
+
+        const auto mtx_out0 = reinterpret_cast<qint16_t *>(out.ptr());
+
+        // Store 16x4 output elements
+        vst1_qs16(mtx_out0 + 0, acc00_qs16);
+        vst1_qs16(mtx_out0 + 4, acc01_qs16);
+        vst1_qs16(mtx_out0 + 8, acc02_qs16);
+        vst1_qs16(mtx_out0 + 12, acc03_qs16);
+    },
+    ina, inb, out);
 }
 
 template <bool multiply_alpha>
@@ -200,9 +632,9 @@ void matrix_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
         win_b = window;
     }
     // Set step_x and step_y for matrix B. Scale by a factor of 4 the X range as the input transposed matrix A has 4 times less the cols of the output matrix
-    // The step along the x direction is 4 times the in_b_stride because for each iteration we compute 4 blocks of size 4x4
-    win_b.set(Window::DimX, Window::Dimension(window.x().start() / 4, window.x().end() / 4, 4 * in_b_stride));
-    win_b.set(Window::DimY, Window::Dimension(0, 1, 0));
+    // The step along the x direction is 2 times the in_b_stride because for each iteration we compute 2 blocks of size 4x4
+    win_b.set(Window::DimX, Window::Dimension(window.x().start() / 4, window.x().end() / 4, 2 * in_b_stride));
+    win_b.set(Window::DimY, Window::Dimension(0, 0, 0));
 
     Iterator ina(input0, win_a);
     Iterator inb(input1, win_b);
@@ -216,8 +648,6 @@ void matrix_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
         auto mtx_a0 = reinterpret_cast<const float *>(ina.ptr());
         auto mtx_b0 = reinterpret_cast<const float *>(inb.ptr());
         auto mtx_b1 = mtx_b0 + in_b_stride;
-        auto mtx_b2 = mtx_b1 + in_b_stride;
-        auto mtx_b3 = mtx_b2 + in_b_stride;
 
         float32x4_t acc00 = vdupq_n_f32(0.f);
         float32x4_t acc10 = vdupq_n_f32(0.f);
@@ -229,55 +659,227 @@ void matrix_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
         float32x4_t acc21 = vdupq_n_f32(0.f);
         float32x4_t acc31 = vdupq_n_f32(0.f);
 
-        float32x4_t acc02 = vdupq_n_f32(0.f);
-        float32x4_t acc12 = vdupq_n_f32(0.f);
-        float32x4_t acc22 = vdupq_n_f32(0.f);
-        float32x4_t acc32 = vdupq_n_f32(0.f);
+#if __arm__
+        asm volatile("PLD [%0, #128*1]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_a0)));
+        asm volatile("PLD [%0, #128*1]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b0)));
+        asm volatile("PLD [%0, #128*1]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b1)));
+#endif /* __arm__ */
 
-        float32x4_t acc03 = vdupq_n_f32(0.f);
-        float32x4_t acc13 = vdupq_n_f32(0.f);
-        float32x4_t acc23 = vdupq_n_f32(0.f);
-        float32x4_t acc33 = vdupq_n_f32(0.f);
-
-        for(int k = 0; k < num_elems_matrix_b_x; k += 4)
+        auto mtx_b0_end_addr = mtx_b0 + num_elems_matrix_b_x;
+        for(; mtx_b0 <= (mtx_b0_end_addr - 32);)
         {
-            const float32x4_t a    = vld1q_f32(mtx_a0);
-            const float32x2_t a00l = vget_low_f32(a);
-            const float32x2_t a00h = vget_high_f32(a);
-            const float32x4_t b00  = vld1q_f32(mtx_b0);
-            const float32x4_t b10  = vld1q_f32(mtx_b1);
-            const float32x4_t b20  = vld1q_f32(mtx_b2);
-            const float32x4_t b30  = vld1q_f32(mtx_b3);
+            float32x4_t a0 = vld1q_dup_f32(mtx_a0 + 0);
+            float32x4_t a1 = vld1q_dup_f32(mtx_a0 + 1);
+            float32x4_t a2 = vld1q_dup_f32(mtx_a0 + 2);
+            float32x4_t a3 = vld1q_dup_f32(mtx_a0 + 3);
+
+            float32x4_t b00 = vld1q_f32(mtx_b0);
+            float32x4_t b10 = vld1q_f32(mtx_b1);
+            float32x4_t b01 = vld1q_f32(mtx_b0 + 4);
+            float32x4_t b11 = vld1q_f32(mtx_b1 + 4);
+
+#if __arm__
+            asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_a0)));
+            asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b0)));
+            asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b1)));
+#endif /* __arm__ */
 
             // 4x4 block 0
-            acc00 = vmlaq_lane_f32(acc00, b00, a00l, 0);
-            acc10 = vmlaq_lane_f32(acc10, b00, a00l, 1);
-            acc20 = vmlaq_lane_f32(acc20, b00, a00h, 0);
-            acc30 = vmlaq_lane_f32(acc30, b00, a00h, 1);
+            acc00 = vmlaq_f32(acc00, b00, a0);
+            acc10 = vmlaq_f32(acc10, b00, a1);
+            acc20 = vmlaq_f32(acc20, b00, a2);
+            acc30 = vmlaq_f32(acc30, b00, a3);
+
+            float32x4_t a4 = vld1q_dup_f32(mtx_a0 + 4);
+            float32x4_t a5 = vld1q_dup_f32(mtx_a0 + 5);
+            float32x4_t a6 = vld1q_dup_f32(mtx_a0 + 6);
+            float32x4_t a7 = vld1q_dup_f32(mtx_a0 + 7);
 
             // 4x4 block 1
-            acc01 = vmlaq_lane_f32(acc01, b10, a00l, 0);
-            acc11 = vmlaq_lane_f32(acc11, b10, a00l, 1);
-            acc21 = vmlaq_lane_f32(acc21, b10, a00h, 0);
-            acc31 = vmlaq_lane_f32(acc31, b10, a00h, 1);
+            acc01 = vmlaq_f32(acc01, b10, a0);
+            acc11 = vmlaq_f32(acc11, b10, a1);
+            acc21 = vmlaq_f32(acc21, b10, a2);
+            acc31 = vmlaq_f32(acc31, b10, a3);
 
-            // 4x4 block 2
-            acc02 = vmlaq_lane_f32(acc02, b20, a00l, 0);
-            acc12 = vmlaq_lane_f32(acc12, b20, a00l, 1);
-            acc22 = vmlaq_lane_f32(acc22, b20, a00h, 0);
-            acc32 = vmlaq_lane_f32(acc32, b20, a00h, 1);
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b01, a4);
+            acc10 = vmlaq_f32(acc10, b01, a5);
+            acc20 = vmlaq_f32(acc20, b01, a6);
+            acc30 = vmlaq_f32(acc30, b01, a7);
 
-            // 4x4 block 3
-            acc03 = vmlaq_lane_f32(acc03, b30, a00l, 0);
-            acc13 = vmlaq_lane_f32(acc13, b30, a00l, 1);
-            acc23 = vmlaq_lane_f32(acc23, b30, a00h, 0);
-            acc33 = vmlaq_lane_f32(acc33, b30, a00h, 1);
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b11, a4);
+            acc11 = vmlaq_f32(acc11, b11, a5);
+            acc21 = vmlaq_f32(acc21, b11, a6);
+            acc31 = vmlaq_f32(acc31, b11, a7);
+
+            mtx_a0 += 8;
+            mtx_b0 += 8;
+            mtx_b1 += 8;
+
+            a0 = vld1q_dup_f32(mtx_a0 + 0);
+            a1 = vld1q_dup_f32(mtx_a0 + 1);
+            a2 = vld1q_dup_f32(mtx_a0 + 2);
+            a3 = vld1q_dup_f32(mtx_a0 + 3);
+
+            b00 = vld1q_f32(mtx_b0);
+            b10 = vld1q_f32(mtx_b1);
+            b01 = vld1q_f32(mtx_b0 + 4);
+            b11 = vld1q_f32(mtx_b1 + 4);
+
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b00, a0);
+            acc10 = vmlaq_f32(acc10, b00, a1);
+            acc20 = vmlaq_f32(acc20, b00, a2);
+            acc30 = vmlaq_f32(acc30, b00, a3);
+
+            a4 = vld1q_dup_f32(mtx_a0 + 4);
+            a5 = vld1q_dup_f32(mtx_a0 + 5);
+            a6 = vld1q_dup_f32(mtx_a0 + 6);
+            a7 = vld1q_dup_f32(mtx_a0 + 7);
+
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b10, a0);
+            acc11 = vmlaq_f32(acc11, b10, a1);
+            acc21 = vmlaq_f32(acc21, b10, a2);
+            acc31 = vmlaq_f32(acc31, b10, a3);
+
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b01, a4);
+            acc10 = vmlaq_f32(acc10, b01, a5);
+            acc20 = vmlaq_f32(acc20, b01, a6);
+            acc30 = vmlaq_f32(acc30, b01, a7);
+
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b11, a4);
+            acc11 = vmlaq_f32(acc11, b11, a5);
+            acc21 = vmlaq_f32(acc21, b11, a6);
+            acc31 = vmlaq_f32(acc31, b11, a7);
+
+            mtx_a0 += 8;
+            mtx_b0 += 8;
+            mtx_b1 += 8;
+
+            a0  = vld1q_dup_f32(mtx_a0 + 0);
+            a1  = vld1q_dup_f32(mtx_a0 + 1);
+            a2  = vld1q_dup_f32(mtx_a0 + 2);
+            a3  = vld1q_dup_f32(mtx_a0 + 3);
+            b00 = vld1q_f32(mtx_b0);
+            b10 = vld1q_f32(mtx_b1);
+            b01 = vld1q_f32(mtx_b0 + 4);
+            b11 = vld1q_f32(mtx_b1 + 4);
+
+#if __arm__
+            asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_a0)));
+            asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b0)));
+            asm volatile("PLD [%0, #128*4]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b1)));
+#endif /* __arm__ */
+
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b00, a0);
+            acc10 = vmlaq_f32(acc10, b00, a1);
+            acc20 = vmlaq_f32(acc20, b00, a2);
+            acc30 = vmlaq_f32(acc30, b00, a3);
+
+            a4 = vld1q_dup_f32(mtx_a0 + 4);
+            a5 = vld1q_dup_f32(mtx_a0 + 5);
+            a6 = vld1q_dup_f32(mtx_a0 + 6);
+            a7 = vld1q_dup_f32(mtx_a0 + 7);
+
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b10, a0);
+            acc11 = vmlaq_f32(acc11, b10, a1);
+            acc21 = vmlaq_f32(acc21, b10, a2);
+            acc31 = vmlaq_f32(acc31, b10, a3);
+
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b01, a4);
+            acc10 = vmlaq_f32(acc10, b01, a5);
+            acc20 = vmlaq_f32(acc20, b01, a6);
+            acc30 = vmlaq_f32(acc30, b01, a7);
+
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b11, a4);
+            acc11 = vmlaq_f32(acc11, b11, a5);
+            acc21 = vmlaq_f32(acc21, b11, a6);
+            acc31 = vmlaq_f32(acc31, b11, a7);
+
+            mtx_a0 += 8;
+            mtx_b0 += 8;
+            mtx_b1 += 8;
+
+            a0  = vld1q_dup_f32(mtx_a0 + 0);
+            a1  = vld1q_dup_f32(mtx_a0 + 1);
+            a2  = vld1q_dup_f32(mtx_a0 + 2);
+            a3  = vld1q_dup_f32(mtx_a0 + 3);
+            b00 = vld1q_f32(mtx_b0);
+            b10 = vld1q_f32(mtx_b1);
+            b01 = vld1q_f32(mtx_b0 + 4);
+            b11 = vld1q_f32(mtx_b1 + 4);
+
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b00, a0);
+            acc10 = vmlaq_f32(acc10, b00, a1);
+            acc20 = vmlaq_f32(acc20, b00, a2);
+            acc30 = vmlaq_f32(acc30, b00, a3);
+
+            a4 = vld1q_dup_f32(mtx_a0 + 4);
+            a5 = vld1q_dup_f32(mtx_a0 + 5);
+            a6 = vld1q_dup_f32(mtx_a0 + 6);
+            a7 = vld1q_dup_f32(mtx_a0 + 7);
+
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b10, a0);
+            acc11 = vmlaq_f32(acc11, b10, a1);
+            acc21 = vmlaq_f32(acc21, b10, a2);
+            acc31 = vmlaq_f32(acc31, b10, a3);
+
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b01, a4);
+            acc10 = vmlaq_f32(acc10, b01, a5);
+            acc20 = vmlaq_f32(acc20, b01, a6);
+            acc30 = vmlaq_f32(acc30, b01, a7);
+
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b11, a4);
+            acc11 = vmlaq_f32(acc11, b11, a5);
+            acc21 = vmlaq_f32(acc21, b11, a6);
+            acc31 = vmlaq_f32(acc31, b11, a7);
+
+            mtx_a0 += 8;
+            mtx_b0 += 8;
+            mtx_b1 += 8;
+        }
+
+        for(; mtx_b0 < mtx_b0_end_addr;)
+        {
+            float32x4_t a0  = vld1q_dup_f32(mtx_a0 + 0);
+            float32x4_t a1  = vld1q_dup_f32(mtx_a0 + 1);
+            float32x4_t a2  = vld1q_dup_f32(mtx_a0 + 2);
+            float32x4_t a3  = vld1q_dup_f32(mtx_a0 + 3);
+            float32x4_t b00 = vld1q_f32(mtx_b0);
+            float32x4_t b10 = vld1q_f32(mtx_b1);
+
+#if __arm__
+            asm volatile("PLD [%0, #128*2]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_a0)));
+            asm volatile("PLD [%0, #128*2]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b0)));
+            asm volatile("PLD [%0, #128*2]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b1)));
+#endif /* __arm__ */
+            // 4x4 block 0
+            acc00 = vmlaq_f32(acc00, b00, a0);
+            acc10 = vmlaq_f32(acc10, b00, a1);
+            acc20 = vmlaq_f32(acc20, b00, a2);
+            acc30 = vmlaq_f32(acc30, b00, a3);
+
+            // 4x4 block 1
+            acc01 = vmlaq_f32(acc01, b10, a0);
+            acc11 = vmlaq_f32(acc11, b10, a1);
+            acc21 = vmlaq_f32(acc21, b10, a2);
+            acc31 = vmlaq_f32(acc31, b10, a3);
 
             mtx_a0 += 4;
             mtx_b0 += 4;
             mtx_b1 += 4;
-            mtx_b2 += 4;
-            mtx_b3 += 4;
         }
 
         // Multiply by the weight of matrix product (alpha)
@@ -292,38 +894,20 @@ void matrix_matrix_multiply_f32(const ITensor *input0, const ITensor *input1, IT
             acc11                       = vmulq_f32(acc11, alpha_f32);
             acc21                       = vmulq_f32(acc21, alpha_f32);
             acc31                       = vmulq_f32(acc31, alpha_f32);
-            acc02                       = vmulq_f32(acc02, alpha_f32);
-            acc12                       = vmulq_f32(acc12, alpha_f32);
-            acc22                       = vmulq_f32(acc22, alpha_f32);
-            acc32                       = vmulq_f32(acc32, alpha_f32);
-            acc03                       = vmulq_f32(acc03, alpha_f32);
-            acc13                       = vmulq_f32(acc13, alpha_f32);
-            acc23                       = vmulq_f32(acc23, alpha_f32);
-            acc33                       = vmulq_f32(acc33, alpha_f32);
         }
 
         const auto mtx_out0 = reinterpret_cast<float *>(out.ptr());
         const auto mtx_out1 = mtx_out0 + 4;
-        const auto mtx_out2 = mtx_out1 + 4;
-        const auto mtx_out3 = mtx_out2 + 4;
 
         // Store the 4 blocks
         vst1q_f32(mtx_out0, acc00);
         vst1q_f32(mtx_out1, acc01);
-        vst1q_f32(mtx_out2, acc02);
-        vst1q_f32(mtx_out3, acc03);
         vst1q_f32(mtx_out0 + out_stride1, acc10);
         vst1q_f32(mtx_out1 + out_stride1, acc11);
-        vst1q_f32(mtx_out2 + out_stride1, acc12);
-        vst1q_f32(mtx_out3 + out_stride1, acc13);
         vst1q_f32(mtx_out0 + out_stride2, acc20);
         vst1q_f32(mtx_out1 + out_stride2, acc21);
-        vst1q_f32(mtx_out2 + out_stride2, acc22);
-        vst1q_f32(mtx_out3 + out_stride2, acc23);
         vst1q_f32(mtx_out0 + out_stride3, acc30);
         vst1q_f32(mtx_out1 + out_stride3, acc31);
-        vst1q_f32(mtx_out2 + out_stride3, acc32);
-        vst1q_f32(mtx_out3 + out_stride3, acc33);
     },
     ina, inb, out);
 }
@@ -332,8 +916,9 @@ template <bool multiply_alpha>
 void matrix_matrix_multiply_f16(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, float alpha)
 {
 #ifdef ARM_COMPUTE_ENABLE_FP16
-    const size_t in_b_stride = input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type());
-    const size_t out_stride  = output->info()->strides_in_bytes()[1] / data_size_from_type(output->info()->data_type());
+    const size_t in_b_stride          = input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type());
+    const size_t out_stride           = output->info()->strides_in_bytes()[1] / data_size_from_type(output->info()->data_type());
+    const int    num_elems_matrix_b_x = input1->info()->dimension(0);
 
     // Set step_x and step_y for matrix A. Scale by a factor of 4 the Y range as the input interleaved matrix A has 4 times less the rows of the output matrix
     Window win_a(window);
@@ -354,9 +939,6 @@ void matrix_matrix_multiply_f16(const ITensor *input0, const ITensor *input1, IT
     Iterator ina(input0, win_a);
     Iterator inb(input1, win_b);
     Iterator out(output, window);
-
-    // Number of iterations of inner loop. Since 8 is the number of accumulations per loop, num_it = (width_mtx_b / 4) / 8
-    const size_t num_it = ((input1->info()->dimension(0)) >> 2) >> 3;
 
     const float16x8_t alpha_f16 = vdupq_n_f16(alpha);
 
@@ -403,10 +985,14 @@ void matrix_matrix_multiply_f16(const ITensor *input0, const ITensor *input1, IT
 
         The size of the output tensor's XY-plane must be the following shape [ width * 8, height / 8 ]. All other dimensions must have the same size.
         */
-        for(size_t k = num_it; k > 0; mtx_a0 += 16, mtx_b0 += 32, --k)
+        const float16_t *mtx_b0_end_addr = mtx_b0 + num_elems_matrix_b_x;
+
+        for(; mtx_b0 <= (mtx_b0_end_addr - 32);)
+
         {
             const float16x8_t p00 = vld1q_f16(mtx_a0);
             const float16x8_t p02 = vld1q_f16(mtx_a0 + 8);
+
             const float16x8_t q00 = vld1q_f16(mtx_b0);
             const float16x8_t q02 = vld1q_f16(mtx_b0 + 8);
             const float16x8_t q04 = vld1q_f16(mtx_b0 + 16);
@@ -431,6 +1017,24 @@ void matrix_matrix_multiply_f16(const ITensor *input0, const ITensor *input1, IT
             c.val[1] = vaddq_f16(c.val[1], vmulq_n_f16(q06, vgetq_lane_f16(p02, 5)));
             c.val[2] = vaddq_f16(c.val[2], vmulq_n_f16(q06, vgetq_lane_f16(p02, 6)));
             c.val[3] = vaddq_f16(c.val[3], vmulq_n_f16(q06, vgetq_lane_f16(p02, 7)));
+
+            mtx_a0 += 16;
+            mtx_b0 += 32;
+        }
+
+        for(; mtx_b0 < mtx_b0_end_addr;)
+
+        {
+            const float16x4_t p00 = vld1_f16(mtx_a0);
+            const float16x8_t q00 = vld1q_f16(mtx_b0);
+
+            c.val[0] = vaddq_f16(c.val[0], vmulq_n_f16(q00, vget_lane_f16(p00, 0)));
+            c.val[1] = vaddq_f16(c.val[1], vmulq_n_f16(q00, vget_lane_f16(p00, 1)));
+            c.val[2] = vaddq_f16(c.val[2], vmulq_n_f16(q00, vget_lane_f16(p00, 2)));
+            c.val[3] = vaddq_f16(c.val[3], vmulq_n_f16(q00, vget_lane_f16(p00, 3)));
+
+            mtx_a0 += 4;
+            mtx_b0 += 8;
         }
 
         if(multiply_alpha)
@@ -447,9 +1051,362 @@ void matrix_matrix_multiply_f16(const ITensor *input0, const ITensor *input1, IT
         vst1q_f16(mtx_out + 3 * out_stride, c.val[3]);
     },
     ina, inb, out);
-#else
+#else  /* ARM_COMPUTE_ENABLE_FP16 */
+    ARM_COMPUTE_UNUSED(input0);
+    ARM_COMPUTE_UNUSED(input1);
+    ARM_COMPUTE_UNUSED(output);
+    ARM_COMPUTE_UNUSED(window);
+    ARM_COMPUTE_UNUSED(alpha);
     ARM_COMPUTE_ERROR("Not implemented");
-#endif
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
+}
+
+template <bool multiply_alpha>
+void matrix_matrix_multiply_qs8(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, float alpha)
+{
+    const size_t    in_b_stride          = input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type());
+    const size_t    out_stride1          = output->info()->strides_in_bytes()[1] / data_size_from_type(output->info()->data_type());
+    const size_t    out_stride2          = out_stride1 * 2;
+    const size_t    out_stride3          = out_stride1 * 3;
+    const int       num_elems_matrix_b_x = input1->info()->dimension(0);
+    const int       fixed_point_position = input0->info()->fixed_point_position();
+    const qint8x8_t alpha_qs8            = vdup_n_qs8(sqcvt_qs8_f32(alpha, fixed_point_position));
+    ARM_COMPUTE_UNUSED(alpha_qs8);
+
+    // Set step_x and step_y for matrix A. Scale by a factor of 4 the Y range as the input interleaved matrix A has 4 times less the rows of the output matrix
+    Window win_a(window);
+    win_a.set(Window::DimX, Window::Dimension(0, 0, 0));
+    win_a.set(Window::DimY, Window::Dimension(window.y().start() / 4, std::max(window.y().end() / 4, 1), 1));
+
+    Window win_b;
+    // Don't slice matrix B along the z dimension if matrix B has just 2 dimensions and matrix A more than 2
+    // This scenario can happen when the the matrix multiplication is used to perform a convolution operation
+    if(input1->info()->num_dimensions() >= 3)
+    {
+        win_b = window;
+    }
+    // Set step_x and step_y for matrix B. Scale by a factor of 16 the X range as the input transposed matrix A has 16 times less the cols of the output matrix
+    // The step along the x direction is 2 times the in_b_stride because for each iteration we compute 2 blocks of size 16x4
+    win_b.set(Window::DimX, Window::Dimension(window.x().start() / 16, window.x().end() / 16, 2 * in_b_stride));
+    win_b.set(Window::DimY, Window::Dimension(0, 0, 0));
+
+    Iterator ina(input0, win_a);
+    Iterator inb(input1, win_b);
+    Iterator out(output, window);
+
+    // The implementation assumes that the matrix A and Matrix B have been reshaped respectively with NEGEMMInterleave4x4 and NEGEMMTranspose1xW
+    // The reshaping of the matrices helps to have a cache friendly implementation and helps to avoid the data re-arrangements needed for computing 16x4 elements per iteration
+    // All the values needed for computing a single 32x4 block will be read from consecutive memory positions
+    execute_window_loop(window, [&](const Coordinates & id)
+    {
+        auto mtx_a0 = reinterpret_cast<const qint8_t *>(ina.ptr());
+        auto mtx_b0 = reinterpret_cast<const qint8_t *>(inb.ptr());
+        auto mtx_b1 = mtx_b0 + in_b_stride;
+
+        qint16x8_t acc00_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc10_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc20_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc30_qs16 = vdupq_n_qs16(0);
+
+        qint16x8_t acc01_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc11_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc21_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc31_qs16 = vdupq_n_qs16(0);
+
+        qint16x8_t acc02_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc12_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc22_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc32_qs16 = vdupq_n_qs16(0);
+
+        qint16x8_t acc03_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc13_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc23_qs16 = vdupq_n_qs16(0);
+        qint16x8_t acc33_qs16 = vdupq_n_qs16(0);
+
+        int k = 0;
+        // This for loop performs 2 accumulations
+        for(; k <= (num_elems_matrix_b_x - 32); k += 32)
+        {
+            const qint8x8_t a0 = vld1_dup_qs8(mtx_a0 + 0);
+            const qint8x8_t a1 = vld1_dup_qs8(mtx_a0 + 1);
+            const qint8x8_t a2 = vld1_dup_qs8(mtx_a0 + 2);
+            const qint8x8_t a3 = vld1_dup_qs8(mtx_a0 + 3);
+            const qint8x8_t a4 = vld1_dup_qs8(mtx_a0 + 4);
+            const qint8x8_t a5 = vld1_dup_qs8(mtx_a0 + 5);
+            const qint8x8_t a6 = vld1_dup_qs8(mtx_a0 + 6);
+            const qint8x8_t a7 = vld1_dup_qs8(mtx_a0 + 7);
+
+            const qint8x8_t b00 = vld1_qs8(mtx_b0 + 0);
+            const qint8x8_t b01 = vld1_qs8(mtx_b0 + 8);
+            const qint8x8_t b10 = vld1_qs8(mtx_b1 + 0);
+            const qint8x8_t b11 = vld1_qs8(mtx_b1 + 8);
+
+            // First accumulation
+            acc00_qs16 = vqmlal_qs8(acc00_qs16, b00, a0, fixed_point_position);
+            acc10_qs16 = vqmlal_qs8(acc10_qs16, b00, a1, fixed_point_position);
+            acc20_qs16 = vqmlal_qs8(acc20_qs16, b00, a2, fixed_point_position);
+            acc30_qs16 = vqmlal_qs8(acc30_qs16, b00, a3, fixed_point_position);
+            acc02_qs16 = vqmlal_qs8(acc02_qs16, b10, a0, fixed_point_position);
+            acc12_qs16 = vqmlal_qs8(acc12_qs16, b10, a1, fixed_point_position);
+            acc22_qs16 = vqmlal_qs8(acc22_qs16, b10, a2, fixed_point_position);
+            acc32_qs16 = vqmlal_qs8(acc32_qs16, b10, a3, fixed_point_position);
+
+            const qint8x8_t b02 = vld1_qs8(mtx_b0 + 16);
+            const qint8x8_t b03 = vld1_qs8(mtx_b0 + 24);
+            const qint8x8_t b12 = vld1_qs8(mtx_b1 + 16);
+            const qint8x8_t b13 = vld1_qs8(mtx_b1 + 24);
+
+            acc01_qs16 = vqmlal_qs8(acc01_qs16, b01, a0, fixed_point_position);
+            acc11_qs16 = vqmlal_qs8(acc11_qs16, b01, a1, fixed_point_position);
+            acc21_qs16 = vqmlal_qs8(acc21_qs16, b01, a2, fixed_point_position);
+            acc31_qs16 = vqmlal_qs8(acc31_qs16, b01, a3, fixed_point_position);
+            acc03_qs16 = vqmlal_qs8(acc03_qs16, b11, a0, fixed_point_position);
+            acc13_qs16 = vqmlal_qs8(acc13_qs16, b11, a1, fixed_point_position);
+            acc23_qs16 = vqmlal_qs8(acc23_qs16, b11, a2, fixed_point_position);
+            acc33_qs16 = vqmlal_qs8(acc33_qs16, b11, a3, fixed_point_position);
+
+#if __arm__
+            asm volatile("PLD [%0, #128*2]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_a0)));
+            asm volatile("PLD [%0, #128*2]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b0)));
+            asm volatile("PLD [%0, #128*2]" ::"r"(reinterpret_cast<const uint8_t *>(mtx_b1)));
+#endif /* __arm__ */
+
+            // Second accumulation
+            acc00_qs16 = vqmlal_qs8(acc00_qs16, b02, a4, fixed_point_position);
+            acc10_qs16 = vqmlal_qs8(acc10_qs16, b02, a5, fixed_point_position);
+            acc20_qs16 = vqmlal_qs8(acc20_qs16, b02, a6, fixed_point_position);
+            acc30_qs16 = vqmlal_qs8(acc30_qs16, b02, a7, fixed_point_position);
+            acc01_qs16 = vqmlal_qs8(acc01_qs16, b03, a4, fixed_point_position);
+            acc11_qs16 = vqmlal_qs8(acc11_qs16, b03, a5, fixed_point_position);
+            acc21_qs16 = vqmlal_qs8(acc21_qs16, b03, a6, fixed_point_position);
+            acc31_qs16 = vqmlal_qs8(acc31_qs16, b03, a7, fixed_point_position);
+            acc02_qs16 = vqmlal_qs8(acc02_qs16, b12, a4, fixed_point_position);
+            acc12_qs16 = vqmlal_qs8(acc12_qs16, b12, a5, fixed_point_position);
+            acc22_qs16 = vqmlal_qs8(acc22_qs16, b12, a6, fixed_point_position);
+            acc32_qs16 = vqmlal_qs8(acc32_qs16, b12, a7, fixed_point_position);
+            acc03_qs16 = vqmlal_qs8(acc03_qs16, b13, a4, fixed_point_position);
+            acc13_qs16 = vqmlal_qs8(acc13_qs16, b13, a5, fixed_point_position);
+            acc23_qs16 = vqmlal_qs8(acc23_qs16, b13, a6, fixed_point_position);
+            acc33_qs16 = vqmlal_qs8(acc33_qs16, b13, a7, fixed_point_position);
+
+            mtx_a0 += 8;
+            mtx_b0 += 32;
+            mtx_b1 += 32;
+        }
+
+        // This for loop performs the left over accumulations
+        for(; k < num_elems_matrix_b_x; k += 16)
+        {
+            const qint8x8_t a0 = vld1_dup_qs8(mtx_a0 + 0);
+            const qint8x8_t a1 = vld1_dup_qs8(mtx_a0 + 1);
+            const qint8x8_t a2 = vld1_dup_qs8(mtx_a0 + 2);
+            const qint8x8_t a3 = vld1_dup_qs8(mtx_a0 + 3);
+
+            const qint8x8_t b00 = vld1_qs8(mtx_b0 + 0);
+            const qint8x8_t b01 = vld1_qs8(mtx_b0 + 8);
+            const qint8x8_t b10 = vld1_qs8(mtx_b1 + 0);
+            const qint8x8_t b11 = vld1_qs8(mtx_b1 + 8);
+
+            acc00_qs16 = vqmlal_qs8(acc00_qs16, b00, a0, fixed_point_position);
+            acc10_qs16 = vqmlal_qs8(acc10_qs16, b00, a1, fixed_point_position);
+            acc20_qs16 = vqmlal_qs8(acc20_qs16, b00, a2, fixed_point_position);
+            acc30_qs16 = vqmlal_qs8(acc30_qs16, b00, a3, fixed_point_position);
+            acc01_qs16 = vqmlal_qs8(acc01_qs16, b01, a0, fixed_point_position);
+            acc11_qs16 = vqmlal_qs8(acc11_qs16, b01, a1, fixed_point_position);
+            acc21_qs16 = vqmlal_qs8(acc21_qs16, b01, a2, fixed_point_position);
+            acc31_qs16 = vqmlal_qs8(acc31_qs16, b01, a3, fixed_point_position);
+            acc02_qs16 = vqmlal_qs8(acc02_qs16, b10, a0, fixed_point_position);
+            acc12_qs16 = vqmlal_qs8(acc12_qs16, b10, a1, fixed_point_position);
+            acc22_qs16 = vqmlal_qs8(acc22_qs16, b10, a2, fixed_point_position);
+            acc32_qs16 = vqmlal_qs8(acc32_qs16, b10, a3, fixed_point_position);
+            acc03_qs16 = vqmlal_qs8(acc03_qs16, b11, a0, fixed_point_position);
+            acc13_qs16 = vqmlal_qs8(acc13_qs16, b11, a1, fixed_point_position);
+            acc23_qs16 = vqmlal_qs8(acc23_qs16, b11, a2, fixed_point_position);
+            acc33_qs16 = vqmlal_qs8(acc33_qs16, b11, a3, fixed_point_position);
+
+            mtx_a0 += 4;
+            mtx_b0 += 16;
+            mtx_b1 += 16;
+        }
+
+        // Convert back to qint8x8_t and saturate
+        qint8x8_t acc00_qs8 = vqmovn_qs16(acc00_qs16);
+        qint8x8_t acc10_qs8 = vqmovn_qs16(acc10_qs16);
+        qint8x8_t acc20_qs8 = vqmovn_qs16(acc20_qs16);
+        qint8x8_t acc30_qs8 = vqmovn_qs16(acc30_qs16);
+
+        qint8x8_t acc01_qs8 = vqmovn_qs16(acc01_qs16);
+        qint8x8_t acc11_qs8 = vqmovn_qs16(acc11_qs16);
+        qint8x8_t acc21_qs8 = vqmovn_qs16(acc21_qs16);
+        qint8x8_t acc31_qs8 = vqmovn_qs16(acc31_qs16);
+
+        qint8x8_t acc02_qs8 = vqmovn_qs16(acc02_qs16);
+        qint8x8_t acc12_qs8 = vqmovn_qs16(acc12_qs16);
+        qint8x8_t acc22_qs8 = vqmovn_qs16(acc22_qs16);
+        qint8x8_t acc32_qs8 = vqmovn_qs16(acc32_qs16);
+
+        qint8x8_t acc03_qs8 = vqmovn_qs16(acc03_qs16);
+        qint8x8_t acc13_qs8 = vqmovn_qs16(acc13_qs16);
+        qint8x8_t acc23_qs8 = vqmovn_qs16(acc23_qs16);
+        qint8x8_t acc33_qs8 = vqmovn_qs16(acc33_qs16);
+
+        // Multiply by the weight of the matrix product (alpha)
+        if(multiply_alpha)
+        {
+            acc00_qs8 = vqmul_qs8(acc00_qs8, alpha_qs8, fixed_point_position);
+            acc10_qs8 = vqmul_qs8(acc10_qs8, alpha_qs8, fixed_point_position);
+            acc20_qs8 = vqmul_qs8(acc20_qs8, alpha_qs8, fixed_point_position);
+            acc30_qs8 = vqmul_qs8(acc30_qs8, alpha_qs8, fixed_point_position);
+            acc01_qs8 = vqmul_qs8(acc01_qs8, alpha_qs8, fixed_point_position);
+            acc11_qs8 = vqmul_qs8(acc11_qs8, alpha_qs8, fixed_point_position);
+            acc21_qs8 = vqmul_qs8(acc21_qs8, alpha_qs8, fixed_point_position);
+            acc31_qs8 = vqmul_qs8(acc31_qs8, alpha_qs8, fixed_point_position);
+            acc02_qs8 = vqmul_qs8(acc02_qs8, alpha_qs8, fixed_point_position);
+            acc12_qs8 = vqmul_qs8(acc12_qs8, alpha_qs8, fixed_point_position);
+            acc22_qs8 = vqmul_qs8(acc22_qs8, alpha_qs8, fixed_point_position);
+            acc32_qs8 = vqmul_qs8(acc32_qs8, alpha_qs8, fixed_point_position);
+            acc03_qs8 = vqmul_qs8(acc03_qs8, alpha_qs8, fixed_point_position);
+            acc13_qs8 = vqmul_qs8(acc13_qs8, alpha_qs8, fixed_point_position);
+            acc23_qs8 = vqmul_qs8(acc23_qs8, alpha_qs8, fixed_point_position);
+            acc33_qs8 = vqmul_qs8(acc33_qs8, alpha_qs8, fixed_point_position);
+        }
+
+        const auto mtx_out0 = reinterpret_cast<qint8_t *>(out.ptr());
+
+        // Store 32x4 output elements
+        vst1_qs8(mtx_out0 + 0, acc00_qs8);
+        vst1_qs8(mtx_out0 + 8, acc01_qs8);
+        vst1_qs8(mtx_out0 + 16, acc02_qs8);
+        vst1_qs8(mtx_out0 + 24, acc03_qs8);
+        vst1_qs8(mtx_out0 + out_stride1 + 0, acc10_qs8);
+        vst1_qs8(mtx_out0 + out_stride1 + 8, acc11_qs8);
+        vst1_qs8(mtx_out0 + out_stride1 + 16, acc12_qs8);
+        vst1_qs8(mtx_out0 + out_stride1 + 24, acc13_qs8);
+        vst1_qs8(mtx_out0 + out_stride2 + 0, acc20_qs8);
+        vst1_qs8(mtx_out0 + out_stride2 + 8, acc21_qs8);
+        vst1_qs8(mtx_out0 + out_stride2 + 16, acc22_qs8);
+        vst1_qs8(mtx_out0 + out_stride2 + 24, acc23_qs8);
+        vst1_qs8(mtx_out0 + out_stride3 + 0, acc30_qs8);
+        vst1_qs8(mtx_out0 + out_stride3 + 8, acc31_qs8);
+        vst1_qs8(mtx_out0 + out_stride3 + 16, acc32_qs8);
+        vst1_qs8(mtx_out0 + out_stride3 + 24, acc33_qs8);
+    },
+    ina, inb, out);
+}
+
+template <bool multiply_alpha>
+void matrix_matrix_multiply_qs16(const ITensor *input0, const ITensor *input1, ITensor *output, const Window &window, float alpha)
+{
+    const size_t     in_b_stride          = input1->info()->strides_in_bytes()[1] / data_size_from_type(input1->info()->data_type());
+    const size_t     out_stride1          = output->info()->strides_in_bytes()[1] / data_size_from_type(output->info()->data_type());
+    const size_t     out_stride2          = out_stride1 * 2;
+    const size_t     out_stride3          = out_stride1 * 3;
+    const int        num_elems_matrix_b_x = input1->info()->dimension(0);
+    const int        fixed_point_position = input0->info()->fixed_point_position();
+    const qint16x4_t alpha_qs16           = vdup_n_qs16(sqcvt_qs16_f32(alpha, fixed_point_position));
+    ARM_COMPUTE_UNUSED(alpha_qs16);
+
+    // Set step_x and step_y for matrix A. Scale by a factor of 4 the Y range as the input interleaved matrix A has 4 times less the rows of the output matrix
+    Window win_a(window);
+    win_a.set(Window::DimX, Window::Dimension(0, 0, 0));
+    win_a.set(Window::DimY, Window::Dimension(window.y().start() / 4, std::max(window.y().end() / 4, 1), 1));
+
+    Window win_b;
+    // Don't slice matrix B along the z dimension if matrix B has just 2 dimensions and matrix A more than 2
+    // This scenario can happen when the the matrix multiplication is used to perform a convolution operation
+    if(input1->info()->num_dimensions() >= 3)
+    {
+        win_b = window;
+    }
+    // Set step_x and step_y for matrix B. Scale by a factor of 16 the X range as the input transposed matrix A has 16 times less the cols of the output matrix
+    win_b.set(Window::DimX, Window::Dimension(window.x().start() / 8, window.x().end() / 8, in_b_stride));
+    win_b.set(Window::DimY, Window::Dimension(0, 0, 0));
+
+    Iterator ina(input0, win_a);
+    Iterator inb(input1, win_b);
+    Iterator out(output, window);
+
+    // The implementation assumes that the matrix A and Matrix B have been reshaped respectively with NEGEMMInterleave4x4 and NEGEMMTranspose1xW
+    // The reshaping of the matrices helps to have a cache friendly implementation and helps to avoid the data re-arrangements needed for computing 8x4 elements per iteration
+    // All the values needed for computing a single 8x4 block will be read from consecutive memory positions
+    execute_window_loop(window, [&](const Coordinates & id)
+    {
+        auto mtx_a0 = reinterpret_cast<const qint16_t *>(ina.ptr());
+        auto mtx_b0 = reinterpret_cast<const qint16_t *>(inb.ptr());
+        auto mtx_b1 = mtx_b0 + in_b_stride;
+
+        qint32x4_t acc00_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc10_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc20_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc30_qs32 = vdupq_n_qs32(0);
+
+        qint32x4_t acc01_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc11_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc21_qs32 = vdupq_n_qs32(0);
+        qint32x4_t acc31_qs32 = vdupq_n_qs32(0);
+
+        // This for loop performs 1 accumulation
+        for(int k = 0; k <= (num_elems_matrix_b_x - 8); k += 8)
+        {
+            const qint16x4_t a0 = vld1_dup_qs16(mtx_a0 + 0);
+            const qint16x4_t a1 = vld1_dup_qs16(mtx_a0 + 1);
+            const qint16x4_t a2 = vld1_dup_qs16(mtx_a0 + 2);
+            const qint16x4_t a3 = vld1_dup_qs16(mtx_a0 + 3);
+
+            const qint16x4_t b00 = vld1_qs16(mtx_b0 + 0);
+            const qint16x4_t b01 = vld1_qs16(mtx_b0 + 4);
+
+            acc00_qs32 = vqmlal_qs16(acc00_qs32, b00, a0, fixed_point_position);
+            acc10_qs32 = vqmlal_qs16(acc10_qs32, b00, a1, fixed_point_position);
+            acc20_qs32 = vqmlal_qs16(acc20_qs32, b00, a2, fixed_point_position);
+            acc30_qs32 = vqmlal_qs16(acc30_qs32, b00, a3, fixed_point_position);
+            acc01_qs32 = vqmlal_qs16(acc01_qs32, b01, a0, fixed_point_position);
+            acc11_qs32 = vqmlal_qs16(acc11_qs32, b01, a1, fixed_point_position);
+            acc21_qs32 = vqmlal_qs16(acc21_qs32, b01, a2, fixed_point_position);
+            acc31_qs32 = vqmlal_qs16(acc31_qs32, b01, a3, fixed_point_position);
+
+            mtx_a0 += 4;
+            mtx_b0 += 8;
+            mtx_b1 += 8;
+        }
+
+        // Convert back to qint16x4_t and saturate
+        qint16x4_t acc00_qs16 = vqmovn_qs32(acc00_qs32);
+        qint16x4_t acc10_qs16 = vqmovn_qs32(acc10_qs32);
+        qint16x4_t acc20_qs16 = vqmovn_qs32(acc20_qs32);
+        qint16x4_t acc30_qs16 = vqmovn_qs32(acc30_qs32);
+
+        qint16x4_t acc01_qs16 = vqmovn_qs32(acc01_qs32);
+        qint16x4_t acc11_qs16 = vqmovn_qs32(acc11_qs32);
+        qint16x4_t acc21_qs16 = vqmovn_qs32(acc21_qs32);
+        qint16x4_t acc31_qs16 = vqmovn_qs32(acc31_qs32);
+
+        // Multiply by the weight of the matrix product (alpha)
+        if(multiply_alpha)
+        {
+            acc00_qs16 = vqmul_qs16(acc00_qs16, alpha_qs16, fixed_point_position);
+            acc10_qs16 = vqmul_qs16(acc10_qs16, alpha_qs16, fixed_point_position);
+            acc20_qs16 = vqmul_qs16(acc20_qs16, alpha_qs16, fixed_point_position);
+            acc30_qs16 = vqmul_qs16(acc30_qs16, alpha_qs16, fixed_point_position);
+            acc01_qs16 = vqmul_qs16(acc01_qs16, alpha_qs16, fixed_point_position);
+            acc11_qs16 = vqmul_qs16(acc11_qs16, alpha_qs16, fixed_point_position);
+            acc21_qs16 = vqmul_qs16(acc21_qs16, alpha_qs16, fixed_point_position);
+            acc31_qs16 = vqmul_qs16(acc31_qs16, alpha_qs16, fixed_point_position);
+        }
+
+        const auto mtx_out0 = reinterpret_cast<qint16_t *>(out.ptr());
+
+        // Store 8x4 output elements
+        vst1_qs16(mtx_out0 + 0, acc00_qs16);
+        vst1_qs16(mtx_out0 + 4, acc01_qs16);
+        vst1_qs16(mtx_out0 + out_stride1 + 0, acc10_qs16);
+        vst1_qs16(mtx_out0 + out_stride1 + 4, acc11_qs16);
+        vst1_qs16(mtx_out0 + out_stride2 + 0, acc20_qs16);
+        vst1_qs16(mtx_out0 + out_stride2 + 4, acc21_qs16);
+        vst1_qs16(mtx_out0 + out_stride3 + 0, acc30_qs16);
+        vst1_qs16(mtx_out0 + out_stride3 + 4, acc31_qs16);
+    },
+    ina, inb, out);
 }
 } // namespace
 
@@ -460,10 +1417,10 @@ NEGEMMMatrixMultiplyKernel::NEGEMMMatrixMultiplyKernel()
 
 void NEGEMMMatrixMultiplyKernel::configure(const ITensor *input0, const ITensor *input1, ITensor *output, float alpha)
 {
-    ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input0, 1, DataType::F16, DataType::F32);
-    ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input1, 1, DataType::F16, DataType::F32);
-    ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(output, 1, DataType::F16, DataType::F32);
+    ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input0, 1, DataType::F16, DataType::F32, DataType::QS8, DataType::QS16);
     ARM_COMPUTE_ERROR_ON_MISMATCHING_DATA_TYPES(input0, input1, output);
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_FIXED_POINT(input0, input1, output);
+
     if(output->info()->dimension(1) == 1)
     {
         ARM_COMPUTE_ERROR_ON(input0->info()->dimension(0) != input1->info()->dimension(1));
@@ -477,10 +1434,39 @@ void NEGEMMMatrixMultiplyKernel::configure(const ITensor *input0, const ITensor 
     unsigned int       num_elems_processed_per_iteration_x = 0;
     const unsigned int num_elems_processed_per_iteration_y = 4;
 
-    // Check if the output tensor is a vector and the data type is F32. If so,the kernel runs the vector-matrix multiplication
-    if((output->info()->dimension(1) == 1) && (input0->info()->data_type() == DataType::F32))
+    // Check if the output tensor is a vector. If so,the kernel runs the vector-matrix multiplication
+    if((output->info()->dimension(1) == 1))
     {
-        num_elems_processed_per_iteration_x = 16;
+        switch(input0->info()->data_type())
+        {
+            case DataType::F32:
+            {
+                num_elems_processed_per_iteration_x = 16;
+                break;
+            }
+            case DataType::QS8:
+            {
+                num_elems_processed_per_iteration_x = 32;
+                break;
+            }
+            case DataType::QS16:
+            {
+                num_elems_processed_per_iteration_x = 16;
+                break;
+            }
+#ifdef ARM_COMPUTE_ENABLE_FP16
+            case DataType::F16:
+            {
+                num_elems_processed_per_iteration_x = 32;
+                break;
+            }
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
+            default:
+            {
+                ARM_COMPUTE_ERROR("Data type not supported");
+                break;
+            }
+        }
 
         // Configure kernel window
         Window win = calculate_max_window(*output->info(), Steps(num_elems_processed_per_iteration_x));
@@ -488,11 +1474,13 @@ void NEGEMMMatrixMultiplyKernel::configure(const ITensor *input0, const ITensor 
         AccessWindowHorizontal output_access(output->info(), 0, num_elems_processed_per_iteration_x);
 
         update_window_and_padding(win,
-                                  AccessWindowHorizontal(input0->info(), 0, num_elems_processed_per_iteration_x),
+                                  AccessWindowStatic(input0->info(), 0, 0, input0->info()->tensor_shape().x(), 1),
                                   AccessWindowHorizontal(input1->info(), 0, num_elems_processed_per_iteration_x),
                                   output_access);
 
-        output_access.set_valid_region(win, ValidRegion(Coordinates(0, 0), output->info()->tensor_shape()));
+        Coordinates coord;
+        coord.set_num_dimensions(output->info()->num_dimensions());
+        output_access.set_valid_region(win, ValidRegion(coord, output->info()->tensor_shape()));
 
         INEKernel::configure(win);
     }
@@ -500,16 +1488,28 @@ void NEGEMMMatrixMultiplyKernel::configure(const ITensor *input0, const ITensor 
     {
         switch(input0->info()->data_type())
         {
+            case DataType::F32:
+            {
+                num_elems_processed_per_iteration_x = 8;
+                break;
+            }
+            case DataType::QS8:
+            {
+                num_elems_processed_per_iteration_x = 32;
+                break;
+            }
+            case DataType::QS16:
+            {
+                num_elems_processed_per_iteration_x = 8;
+                break;
+            }
+#ifdef ARM_COMPUTE_ENABLE_FP16
             case DataType::F16:
             {
                 num_elems_processed_per_iteration_x = 8;
                 break;
             }
-            case DataType::F32:
-            {
-                num_elems_processed_per_iteration_x = 16;
-                break;
-            }
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
             default:
             {
                 ARM_COMPUTE_ERROR("Data type not supported");
@@ -523,8 +1523,8 @@ void NEGEMMMatrixMultiplyKernel::configure(const ITensor *input0, const ITensor 
         AccessWindowRectangle output_access(output->info(), 0, 0, num_elems_processed_per_iteration_x, num_elems_processed_per_iteration_y);
 
         update_window_and_padding(win,
-                                  AccessWindowRectangle(input0->info(), 0, 0, 4, 1),
-                                  AccessWindowRectangle(input1->info(), 0, 0, 4, 1),
+                                  AccessWindowRectangle(input0->info(), 0, 0, 4, 1, 1.f, 0.25f),
+                                  AccessWindowStatic(input1->info(), 0, 0, input1->info()->tensor_shape().x(), ceil_to_multiple(input1->info()->tensor_shape().y(), 4)),
                                   output_access);
 
         output_access.set_valid_region(win, ValidRegion(Coordinates(0, 0), output->info()->tensor_shape()));
@@ -533,53 +1533,81 @@ void NEGEMMMatrixMultiplyKernel::configure(const ITensor *input0, const ITensor 
     }
 }
 
-void NEGEMMMatrixMultiplyKernel::run(const Window &window)
+void NEGEMMMatrixMultiplyKernel::run(const Window &window, const ThreadInfo &info)
 {
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INEKernel::window(), window);
 
     bool multiply_alpha = std::abs(1.0f - _alpha) > 0.00001f;
 
-    // Check if the output tensor is a vector and the data type is F32. If so,the kernel runs the vector-matrix multiplication
-    if((_output->info()->dimension(1) == 1) && (_input0->info()->data_type() == DataType::F32))
+    // Check if the output tensor is a vector. If so,the kernel runs the vector-matrix multiplication
+    if((_output->info()->dimension(1) == 1))
     {
-        if(multiply_alpha)
+        switch(_input0->info()->data_type())
         {
-            vector_matrix_multiply_f32<true>(_input0, _input1, _output, window, _alpha);
-        }
-        else
-        {
-            vector_matrix_multiply_f32<false>(_input0, _input1, _output, window, _alpha);
+            case DataType::F32:
+            {
+                multiply_alpha ? vector_matrix_multiply_f32<true>(_input0, _input1, _output, window, info, _alpha) :
+                vector_matrix_multiply_f32<false>(_input0, _input1, _output, window, info, _alpha);
+                break;
+            }
+            case DataType::QS8:
+            {
+                multiply_alpha ? vector_matrix_multiply_qs8<true>(_input0, _input1, _output, window, info, _alpha) :
+                vector_matrix_multiply_qs8<false>(_input0, _input1, _output, window, info, _alpha);
+                break;
+            }
+            case DataType::QS16:
+            {
+                multiply_alpha ? vector_matrix_multiply_qs16<true>(_input0, _input1, _output, window, info, _alpha) :
+                vector_matrix_multiply_qs16<false>(_input0, _input1, _output, window, info, _alpha);
+                break;
+            }
+#ifdef ARM_COMPUTE_ENABLE_FP16
+            case DataType::F16:
+            {
+                multiply_alpha ? vector_matrix_multiply_f16<true>(_input0, _input1, _output, window, info, _alpha) :
+                vector_matrix_multiply_f16<false>(_input0, _input1, _output, window, info, _alpha);
+                break;
+            }
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
+            default:
+            {
+                ARM_COMPUTE_ERROR("Data type not supported");
+                break;
+            }
         }
     }
     else
     {
         switch(_input0->info()->data_type())
         {
-            case DataType::F16:
-            {
-                if(multiply_alpha)
-                {
-                    matrix_matrix_multiply_f16<true>(_input0, _input1, _output, window, _alpha);
-                }
-                else
-                {
-                    matrix_matrix_multiply_f16<false>(_input0, _input1, _output, window, _alpha);
-                }
-                break;
-            }
             case DataType::F32:
             {
-                if(multiply_alpha)
-                {
-                    matrix_matrix_multiply_f32<true>(_input0, _input1, _output, window, _alpha);
-                }
-                else
-                {
-                    matrix_matrix_multiply_f32<false>(_input0, _input1, _output, window, _alpha);
-                }
+                multiply_alpha ? matrix_matrix_multiply_f32<true>(_input0, _input1, _output, window, _alpha) :
+                matrix_matrix_multiply_f32<false>(_input0, _input1, _output, window, _alpha);
                 break;
             }
+            case DataType::QS8:
+            {
+                multiply_alpha ? matrix_matrix_multiply_qs8<true>(_input0, _input1, _output, window, _alpha) :
+                matrix_matrix_multiply_qs8<false>(_input0, _input1, _output, window, _alpha);
+                break;
+            }
+            case DataType::QS16:
+            {
+                multiply_alpha ? matrix_matrix_multiply_qs16<true>(_input0, _input1, _output, window, _alpha) :
+                matrix_matrix_multiply_qs16<false>(_input0, _input1, _output, window, _alpha);
+                break;
+            }
+#ifdef ARM_COMPUTE_ENABLE_FP16
+            case DataType::F16:
+            {
+                multiply_alpha ? matrix_matrix_multiply_f16<true>(_input0, _input1, _output, window, _alpha) :
+                matrix_matrix_multiply_f16<false>(_input0, _input1, _output, window, _alpha);
+                break;
+            }
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
             default:
             {
                 ARM_COMPUTE_ERROR("Data type not supported");

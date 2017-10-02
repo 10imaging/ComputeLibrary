@@ -23,6 +23,7 @@
  */
 #include "arm_compute/core/CL/ICLKernel.h"
 
+#include "arm_compute/core/CL/CLHelpers.h"
 #include "arm_compute/core/CL/ICLTensor.h"
 #include "arm_compute/core/Error.h"
 #include "arm_compute/core/Helpers.h"
@@ -42,7 +43,10 @@ void arm_compute::enqueue(cl::CommandQueue &queue, ICLKernel &kernel, const Wind
         return;
     }
 
-    ARM_COMPUTE_ERROR_ON((0 == (window.x().end() - window.x().start())) || (0 == (window.y().end() - window.y().start())));
+    if((window.x().end() - window.x().start()) == 0 || (window.y().end() - window.y().start()) == 0)
+    {
+        return;
+    }
 
     cl::NDRange gws((window.x().end() - window.x().start()) / window.x().step(),
                     (window.y().end() - window.y().start()) / window.y().step(),
@@ -59,7 +63,7 @@ void arm_compute::enqueue(cl::CommandQueue &queue, ICLKernel &kernel, const Wind
 }
 
 ICLKernel::ICLKernel()
-    : _kernel(nullptr), _lws_hint(cl::Range_128_1)
+    : _kernel(nullptr), _lws_hint(CLKernelLibrary::get().default_ndrange()), _target(GPUTarget::MIDGARD), _config_id(arm_compute::default_config_id)
 {
 }
 
@@ -69,19 +73,12 @@ cl::Kernel &ICLKernel::kernel()
 }
 
 template <unsigned int dimension_size>
-unsigned int           ICLKernel::num_arguments_per_tensor() const
-{
-    return 2 + 2 * dimension_size;
-}
-
-template <unsigned int dimension_size>
 void ICLKernel::add_tensor_argument(unsigned &idx, const ICLTensor *tensor, const Window &window)
 {
     ARM_COMPUTE_ERROR_ON(tensor == nullptr);
-    ARM_COMPUTE_ERROR_ON_WINDOW_DIMENSIONS_GTE(window, tensor->info()->num_dimensions());
 
-    const TensorInfo *info    = tensor->info();
-    const Strides    &strides = info->strides_in_bytes();
+    const ITensorInfo *info    = tensor->info();
+    const Strides     &strides = info->strides_in_bytes();
 
     // Calculate offset to the start of the window
     unsigned int offset_first_element = info->offset_first_element_in_bytes();
@@ -122,6 +119,16 @@ void ICLKernel::add_3D_tensor_argument(unsigned int &idx, const ICLTensor *tenso
     add_tensor_argument<3>(idx, tensor, window);
 }
 
+void ICLKernel::add_4D_tensor_argument(unsigned int &idx, const ICLTensor *tensor, const Window &window)
+{
+    add_tensor_argument<4>(idx, tensor, window);
+}
+
+unsigned int ICLKernel::num_arguments_per_1D_array() const
+{
+    return num_arguments_per_array<1>();
+}
+
 unsigned int ICLKernel::num_arguments_per_1D_tensor() const
 {
     return num_arguments_per_tensor<1>();
@@ -135,4 +142,24 @@ unsigned int ICLKernel::num_arguments_per_2D_tensor() const
 unsigned int ICLKernel::num_arguments_per_3D_tensor() const
 {
     return num_arguments_per_tensor<3>();
+}
+
+unsigned int ICLKernel::num_arguments_per_4D_tensor() const
+{
+    return num_arguments_per_tensor<4>();
+}
+
+void ICLKernel::set_target(cl::Device &device)
+{
+    _target = get_target_from_device(device);
+}
+
+void ICLKernel::set_target(GPUTarget target)
+{
+    _target = target;
+}
+
+GPUTarget ICLKernel::get_target() const
+{
+    return _target;
 }

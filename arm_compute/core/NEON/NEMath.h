@@ -28,165 +28,158 @@
 
 namespace arm_compute
 {
-/* Exponent polynomial coefficients */
-const std::array<float32x4_t, 8> exp_tab =
-{
-    {
-        vdupq_n_f32(1.f),
-        vdupq_n_f32(0.0416598916054f),
-        vdupq_n_f32(0.500000596046f),
-        vdupq_n_f32(0.0014122662833f),
-        vdupq_n_f32(1.00000011921f),
-        vdupq_n_f32(0.00833693705499f),
-        vdupq_n_f32(0.166665703058f),
-        vdupq_n_f32(0.000195780929062f),
-    }
-};
-
-/* Logarithm polynomial coefficients */
-const std::array<float32x4_t, 8> log_tab =
-{
-    {
-        vdupq_n_f32(-2.29561495781f),
-        vdupq_n_f32(-2.47071170807f),
-        vdupq_n_f32(-5.68692588806f),
-        vdupq_n_f32(-0.165253549814f),
-        vdupq_n_f32(5.17591238022f),
-        vdupq_n_f32(0.844007015228f),
-        vdupq_n_f32(4.58445882797f),
-        vdupq_n_f32(0.0141278216615f),
-    }
-};
+/** Calculate floor of a vector.
+ *
+ * @param[in] val Input vector value in F32 format.
+ *
+ * @return The calculated floor vector.
+ */
+float32x4_t vfloorq_f32(float32x4_t val);
 
 /** Calculate inverse square root.
  *
- * @param x Input value.
+ * @param[in] x Input value.
  *
  * @return The calculated inverse square root.
  */
-inline float32x4_t vinvsqrt_f32(float32x4_t x)
-{
-    float32x4_t sqrt_reciprocal = vrsqrteq_f32(x);
-    sqrt_reciprocal             = vmulq_f32(vrsqrtsq_f32(vmulq_f32(x, sqrt_reciprocal), sqrt_reciprocal), sqrt_reciprocal);
-    sqrt_reciprocal             = vmulq_f32(vrsqrtsq_f32(vmulq_f32(x, sqrt_reciprocal), sqrt_reciprocal), sqrt_reciprocal);
+float32x2_t vinvsqrt_f32(float32x2_t x);
 
-    return sqrt_reciprocal;
-}
+/** Calculate inverse square root.
+ *
+ * @param[in] x Input value.
+ *
+ * @return The calculated inverse square root.
+ */
+float32x4_t vinvsqrtq_f32(float32x4_t x);
 
 /** Calculate reciprocal.
  *
- * @param x Input value.
+ * @param[in] x Input value.
  *
  * @return The calculated reciprocal.
  */
-inline float32x4_t vinv_f32(const float32x4_t &x)
-{
-    float32x4_t recip = vrecpeq_f32(x);
-    recip             = vmulq_f32(vrecpsq_f32(x, recip), recip);
-    recip             = vmulq_f32(vrecpsq_f32(x, recip), recip);
-    return recip;
-}
+float32x2_t vinv_f32(float32x2_t x);
+
+/** Calculate reciprocal.
+ *
+ * @param[in] x Input value.
+ *
+ * @return The calculated reciprocal.
+ */
+float32x4_t vinvq_f32(float32x4_t x);
 
 /** Perform a 7th degree polynomial approximation using Estrin's method.
  *
- * @param x       Input vector value in F32 format.
- * @param coeffs  Polynomial coefficients table.
+ * @param[in] x      Input vector value in F32 format.
+ * @param[in] coeffs Polynomial coefficients table.
  *
  * @return The calculated approximation.
  */
-inline float32x4_t vtaylor_poly_f32(const float32x4_t &x, const std::array<float32x4_t, 8> &coeffs)
-{
-    float32x4_t A   = vmlaq_f32(coeffs[0], coeffs[4], x);
-    float32x4_t B   = vmlaq_f32(coeffs[2], coeffs[6], x);
-    float32x4_t C   = vmlaq_f32(coeffs[1], coeffs[5], x);
-    float32x4_t D   = vmlaq_f32(coeffs[3], coeffs[7], x);
-    float32x4_t x2  = vmulq_f32(x, x);
-    float32x4_t x4  = vmulq_f32(x2, x2);
-    float32x4_t res = vmlaq_f32(vmlaq_f32(A, B, x2), vmlaq_f32(C, D, x2), x4);
-    return res;
-}
+float32x4_t vtaylor_polyq_f32(float32x4_t x, const std::array<float32x4_t, 8> &coeffs);
 
 /** Calculate exponential
  *
- * @param x Input vector value in F32 format.
+ * @param[in] x Input vector value in F32 format.
  *
  * @return The calculated exponent.
  */
-inline float32x4_t vexp_f32(const float32x4_t &x)
-{
-    static const float32x4_t CONST_LN2     = vdupq_n_f32(0.6931471805f); // ln(2)
-    static const float32x4_t CONST_INV_LN2 = vdupq_n_f32(1.4426950408f); // 1/ln(2)
-
-    // Perform range reduction [-log(2),log(2)]
-    int32x4_t   m   = vcvtq_s32_f32(vmulq_f32(x, CONST_INV_LN2));
-    float32x4_t val = vmlsq_f32(x, vcvtq_f32_s32(m), CONST_LN2);
-
-    // Polynomial Approximation
-    float32x4_t poly = vtaylor_poly_f32(val, exp_tab);
-
-    // Reconstruct
-    poly = vreinterpretq_f32_s32(vaddq_s32(vreinterpretq_s32_f32(poly), vshlq_n_s32(m, 23)));
-
-    return poly;
-}
+float32x4_t vexpq_f32(float32x4_t x);
 
 /** Calculate logarithm
  *
- * @param x Input vector value in F32 format.
+ * @param[in] x Input vector value in F32 format.
  *
  * @return The calculated logarithm.
  */
-inline float32x4_t vlog_f32(const float32x4_t &x)
-{
-    static const int32x4_t   CONST_127 = vdupq_n_s32(127);           // 127
-    static const float32x4_t CONST_LN2 = vdupq_n_f32(0.6931471805f); // ln(2)
-
-    // Extract exponent
-    int32x4_t   m   = vsubq_s32(vreinterpretq_s32_u32(vshrq_n_u32(vreinterpretq_u32_f32(x), 23)), CONST_127);
-    float32x4_t val = vreinterpretq_f32_s32(vsubq_s32(vreinterpretq_s32_f32(x), vshlq_n_s32(m, 23)));
-
-    // Polynomial Approximation
-    float32x4_t poly = vtaylor_poly_f32(val, log_tab);
-
-    // Reconstruct
-    poly = vmlaq_f32(poly, vcvtq_f32_s32(m), CONST_LN2);
-
-    return poly;
-}
+float32x4_t vlogq_f32(float32x4_t x);
 
 /** Calculate hyperbolic tangent.
  *
  * tanh(x) = (e^2x - 1)/(e^2x + 1)
  *
- * @param val Input vector value in F32 format.
+ * @note We clamp x to [-5,5] to avoid overflowing issues.
+ *
+ * @param[in] val Input vector value in F32 format.
  *
  * @return The calculated Hyperbolic Tangent.
  */
-inline float32x4_t vtanh_f32(const float32x4_t &val)
-{
-    static const float32x4_t CONST_1 = vdupq_n_f32(1.f); // 1.f
-    static const float32x4_t CONST_2 = vdupq_n_f32(2.f); // 2.f
-
-    float32x4_t exp2x = vexp_f32(vmulq_f32(CONST_2, val));
-    float32x4_t num   = vsubq_f32(exp2x, CONST_1);
-    float32x4_t den   = vaddq_f32(exp2x, CONST_1);
-    float32x4_t tanh  = vmulq_f32(num, vinv_f32(den));
-    return tanh;
-}
+float32x4_t vtanhq_f32(float32x4_t val);
 
 /** Calculate n power of a number.
  *
  * pow(x,n) = e^(n*log(x))
  *
- * @param val Input vector value in F32 format.
- * @param n   Powers to raise the input to.
+ * @param[in] val Input vector value in F32 format.
+ * @param[in] n   Powers to raise the input to.
  *
  * @return The calculated power.
  */
-inline float32x4_t vpowq_f32(const float32x4_t &val, const float32x4_t &n)
-{
-    return vexp_f32(vmulq_f32(n, vlog_f32(val)));
-}
-}
+float32x4_t vpowq_f32(float32x4_t val, float32x4_t n);
 
+#ifdef ARM_COMPUTE_ENABLE_FP16
+/** Calculate hyperbolic tangent.
+ *
+ * tanh(x) = (e^2x - 1)/(e^2x + 1)
+ *
+ * @note We clamp x to [-5,5] to avoid overflowing issues.
+ *
+ * @param[in] val Input vector value in F32 format.
+ *
+ * @return The calculated Hyperbolic Tangent.
+ */
+float16x8_t vtanhq_f16(float16x8_t val);
+
+/** Calculate reciprocal.
+ *
+ * @param[in] x Input value.
+ *
+ * @return The calculated reciprocal.
+ */
+float16x4_t vinv_f16(float16x4_t x);
+
+/** Calculate reciprocal.
+ *
+ * @param[in] x Input value.
+ *
+ * @return The calculated reciprocal.
+ */
+float16x8_t vinvq_f16(float16x8_t x);
+
+/** Calculate inverse square root.
+ *
+ * @param[in] x Input value.
+ *
+ * @return The calculated inverse square root.
+ */
+float16x4_t vinvsqrt_f16(float16x4_t x);
+
+/** Calculate inverse square root.
+ *
+ * @param[in] x Input value.
+ *
+ * @return The calculated inverse square root.
+ */
+float16x8_t vinvsqrtq_f16(float16x8_t x);
+
+/** Calculate exponential
+ *
+ * @param[in] x Input vector value in F16 format.
+ *
+ * @return The calculated exponent.
+ */
+float16x8_t vexpq_f16(float16x8_t x);
+
+/** Calculate n power of a number.
+ *
+ * pow(x,n) = e^(n*log(x))
+ *
+ * @param[in] val Input vector value in F16 format.
+ * @param[in] n   Powers to raise the input to.
+ *
+ * @return The calculated power.
+ */
+float16x8_t vpowq_f16(float16x8_t val, float16x8_t n);
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
+} // namespace arm_compute
+#include "arm_compute/core/NEON/NEMath.inl"
 #endif /* __ARM_COMPUTE_NEMATH_H__ */

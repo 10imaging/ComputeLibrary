@@ -1,6 +1,7 @@
 var searchData=
 [
-  ['multihog',['MultiHOG',['../classarm__compute_1_1_multi_h_o_g.xhtml',1,'arm_compute']]],
-  ['multiimage',['MultiImage',['../classarm__compute_1_1_multi_image.xhtml',1,'arm_compute']]],
-  ['multiimageinfo',['MultiImageInfo',['../classarm__compute_1_1_multi_image_info.xhtml',1,'arm_compute']]]
+  ['harriscornersparameters',['HarrisCornersParameters',['../structarm__compute_1_1test_1_1validation_1_1_harris_corners_parameters.xhtml',1,'arm_compute::test::validation']]],
+  ['harriscornersvalidationfixture',['HarrisCornersValidationFixture',['../classarm__compute_1_1test_1_1validation_1_1_harris_corners_validation_fixture.xhtml',1,'arm_compute::test::validation']]],
+  ['hog',['HOG',['../classarm__compute_1_1_h_o_g.xhtml',1,'arm_compute']]],
+  ['hoginfo',['HOGInfo',['../classarm__compute_1_1_h_o_g_info.xhtml',1,'arm_compute']]]
 ];

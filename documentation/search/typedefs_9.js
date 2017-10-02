@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['size2darray',['Size2DArray',['../namespacearm__compute.xhtml#abd445adaaca7913c9344c90dc8c76358',1,'arm_compute']]]
+  ['keypoint',['Keypoint',['../types_8h.xhtml#a29b97e206612aa5366b3bd3d2f7be322',1,'types.h']]],
+  ['keypointarray',['KeyPointArray',['../namespacearm__compute.xhtml#a8856eca9a83e16bb0cb5880e9c6c9fe7',1,'arm_compute']]]
 ];

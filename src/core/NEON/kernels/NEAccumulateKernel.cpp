@@ -114,8 +114,9 @@ void acc_we_v16_u8(const void *__restrict input, void *__restrict accum, float16
 }
 } // namespace fp16
 
-void NEAccumulateWeightedFP16Kernel::run(const Window &window)
+void NEAccumulateWeightedFP16Kernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INESimpleKernel::window(), window);
 
@@ -131,7 +132,7 @@ void NEAccumulateWeightedFP16Kernel::run(const Window &window)
     },
     input, accum);
 }
-#endif
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
 
 namespace
 {
@@ -248,15 +249,23 @@ void acc_sq_v16_u8(const void *__restrict input, uint32_t shift, void *__restric
 
 void NEAccumulateKernel::configure(const ITensor *input, ITensor *accum)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, accum);
+
+    set_shape_if_empty(*accum->info(), input->info()->tensor_shape());
+
+    set_format_if_unknown(*accum->info(), Format::S16);
+
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(accum, 1, DataType::S16);
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, accum);
 
     constexpr unsigned int num_elems_processed_per_iteration = 16;
     INESimpleKernel::configure(input, accum, num_elems_processed_per_iteration);
 }
 
-void NEAccumulateKernel::run(const Window &window)
+void NEAccumulateKernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INESimpleKernel::window(), window);
     Iterator input(_input, window);
@@ -276,6 +285,13 @@ NEAccumulateWeightedKernel::NEAccumulateWeightedKernel()
 
 void NEAccumulateWeightedKernel::configure(const ITensor *input, float alpha, ITensor *accum)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, accum);
+
+    set_shape_if_empty(*accum->info(), input->info()->tensor_shape());
+
+    set_format_if_unknown(*accum->info(), Format::U8);
+
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, accum);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(accum, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON(alpha < 0.0 || alpha > 1.0);
@@ -286,8 +302,9 @@ void NEAccumulateWeightedKernel::configure(const ITensor *input, float alpha, IT
     INESimpleKernel::configure(input, accum, num_elems_processed_per_iteration);
 }
 
-void NEAccumulateWeightedKernel::run(const Window &window)
+void NEAccumulateWeightedKernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INESimpleKernel::window(), window);
 
@@ -311,6 +328,13 @@ NEAccumulateSquaredKernel::NEAccumulateSquaredKernel()
 
 void NEAccumulateSquaredKernel::configure(const ITensor *input, uint32_t shift, ITensor *accum)
 {
+    ARM_COMPUTE_ERROR_ON_NULLPTR(input, accum);
+
+    set_shape_if_empty(*accum->info(), input->info()->tensor_shape());
+
+    set_format_if_unknown(*accum->info(), Format::S16);
+
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_SHAPES(input, accum);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(input, 1, DataType::U8);
     ARM_COMPUTE_ERROR_ON_DATA_TYPE_CHANNEL_NOT_IN(accum, 1, DataType::S16);
     ARM_COMPUTE_ERROR_ON(shift > 15);
@@ -321,8 +345,9 @@ void NEAccumulateSquaredKernel::configure(const ITensor *input, uint32_t shift, 
     INESimpleKernel::configure(input, accum, num_elems_processed_per_iteration);
 }
 
-void NEAccumulateSquaredKernel::run(const Window &window)
+void NEAccumulateSquaredKernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
     ARM_COMPUTE_ERROR_ON_INVALID_SUBWINDOW(INESimpleKernel::window(), window);
     Iterator input(_input, window);

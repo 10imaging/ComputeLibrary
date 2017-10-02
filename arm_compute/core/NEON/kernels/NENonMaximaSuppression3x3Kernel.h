@@ -54,14 +54,14 @@ public:
 
     /** Initialise the kernel's sources, destinations and border mode.
      *
-     * @param[in]  input            Source tensor. Data types supported: U8, F32
+     * @param[in]  input            Source tensor. Data types supported: U8/F32
      * @param[out] output           Destination tensor. Data types supported: same as @p input
      * @param[in]  border_undefined True if the border mode is undefined. False if it's replicate or constant.
      */
     void configure(const ITensor *input, ITensor *output, bool border_undefined);
 
     // Inherited methods overridden:
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
     BorderSize border_size() const override;
 
 protected:
@@ -79,21 +79,21 @@ protected:
 };
 
 #ifdef ARM_COMPUTE_ENABLE_FP16
-/** NEON kernel to perform Non-Maxima suppression 3x3
+/** NEON kernel to perform Non-Maxima suppression 3x3 with intermediate results in F16 if the input data type is F32
  */
 class NENonMaximaSuppression3x3FP16Kernel : public NENonMaximaSuppression3x3Kernel
 {
 public:
     /** Initialise the kernel's sources, destinations and border mode.
      *
-     * @param[in]  input            Source tensor. Data types supported: U8, F32.
+     * @param[in]  input            Source tensor. Data types supported: U8/F32.
      * @param[out] output           Destination tensor. Data types supported: same as @p input
      * @param[in]  border_undefined True if the border mode is undefined. False if it's replicate or constant.
      */
     void configure(const ITensor *input, ITensor *output, bool border_undefined);
 };
-#else
+#else  /* ARM_COMPUTE_ENABLE_FP16 */
 using NENonMaximaSuppression3x3FP16Kernel = NENonMaximaSuppression3x3Kernel;
-#endif
-}
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
+} // namespace arm_compute
 #endif /* _ARM_COMPUTE_NENONMAXIMASUPPRESSION3x3KERNEL_H__ */

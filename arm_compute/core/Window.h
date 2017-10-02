@@ -30,7 +30,7 @@
 
 #include "arm_compute/core/Coordinates.h"
 #include "arm_compute/core/Error.h"
-#include "arm_compute/core/TensorInfo.h"
+#include "arm_compute/core/ITensorInfo.h"
 #include "arm_compute/core/Utils.h"
 
 namespace arm_compute
@@ -48,7 +48,7 @@ public:
 
     /** Default constructor: create a window containing a single element. */
     constexpr Window()
-        : _dims(), _thread_id(0), _num_threads(1)
+        : _dims()
     {
     }
     /** Copy constructor
@@ -157,10 +157,10 @@ public:
 
     /** Use the tensor's dimensions to fill the window dimensions.
      *
-     * @param[in] info            Tensor information to copy the dimensions from.
+     * @param[in] shape           @ref TensorShape to copy the dimensions from.
      * @param[in] first_dimension Only copy dimensions which are greater or equal to this value.
      */
-    void use_tensor_dimensions(const TensorInfo *info, size_t first_dimension = Window::DimX);
+    void use_tensor_dimensions(const TensorShape &shape, size_t first_dimension = Window::DimX);
 
     /** Shift the values of a given dimension by the given shift_value
      *
@@ -168,6 +168,14 @@ public:
      * @param[in] shift_value Value to shift the start and end values of.
      */
     void shift(size_t dimension, int shift_value);
+
+    /** Adjust the start or end of a given dimension by the given value
+     *
+     * @param[in] dimension    The dimension to adjust
+     * @param[in] adjust_value The adjusted value.
+     * @param[in] is_at_start  The flag to indicate whether adjust the start or end of the dimension.
+     */
+    void adjust(size_t dimension, int adjust_value, bool is_at_start);
 
     /** Scale the values of a given dimension by the given scale_value
      *
@@ -273,38 +281,29 @@ public:
     {
         return slide_window_slice<3>(slice);
     }
-    /** Sets the ID of the thread that the window is associated with.
+    /** Slide the passed 4D window slice.
      *
-     * @param id ID of the thread that the window is associated with.
-     */
-    void set_thread_id(unsigned int id)
-    {
-        _thread_id = id;
-    }
-    /** Sets the number of threads dispatched that the window is associated with.
+     * If slice contains the last slice then it will remain unchanged and false will be returned.
      *
-     * @param num_threads The number of threads dispatched that the window is associated with.
-     */
-    void set_num_threads(unsigned int num_threads)
-    {
-        _num_threads = num_threads;
-    }
-    /** Get the ID of the thread that the window is associated with.
+     * @param[in,out] slice Current slice, to be updated to the next slice.
      *
-     * @return ID of the thread that the window is associated with.
+     * @return true if slice contains a new slice, false if slice already contained the last slice
      */
-    constexpr unsigned int thread_id() const
+    bool slide_window_slice_4D(Window &slice) const
     {
-        return _thread_id;
+        return slide_window_slice<4>(slice);
     }
-    /** Get the number of threads dispatched that the window is associated with.
+
+    /* Collapse the dimensions higher than @p first if possible.
      *
-     * @return The number of threads dispatched that the window is associated with.
+     * A dimension is collapsable if it starts from 0 and matches the corresponding dimension in the full_window
+     *
+     * @param[in] full_window Full window @p window has been created from.
+     * @param[in] first       Dimensions into which the following are collapsed.
+     *
+     * @return Collapsed window.
      */
-    constexpr unsigned int num_threads() const
-    {
-        return _num_threads;
-    }
+    Window collapse_if_possible(const Window &full_window, size_t first) const;
 
 private:
     /** First slice of the window
@@ -327,8 +326,6 @@ private:
 
 private:
     std::array<Dimension, Coordinates::num_max_dimensions> _dims;
-    unsigned int _thread_id;
-    unsigned int _num_threads;
 };
 }
 #include "Window.inl"

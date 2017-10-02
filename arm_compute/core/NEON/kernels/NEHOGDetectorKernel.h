@@ -27,8 +27,7 @@
 #include "arm_compute/core/IArray.h"
 #include "arm_compute/core/IHOG.h"
 #include "arm_compute/core/NEON/INEKernel.h"
-
-#include <mutex>
+#include "support/Mutex.h"
 
 namespace arm_compute
 {
@@ -64,7 +63,7 @@ public:
     void configure(const ITensor *input, const IHOG *hog, IDetectionWindowArray *detection_windows, const Size2D &detection_window_stride, float threshold = 0.0f, uint16_t idx_class = 0);
 
     // Inherited methods overridden:
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
 
 private:
     const ITensor         *_input;
@@ -79,8 +78,8 @@ private:
     size_t                 _block_stride_height;
     size_t                 _detection_window_width;
     size_t                 _detection_window_height;
-    std::mutex             _mutex;
+    size_t                 _max_num_detection_windows;
+    arm_compute::Mutex     _mutex;
 };
-}
-
+} // namespace arm_compute
 #endif /* __ARM_COMPUTE_NEHOGDETECTORKERNEL_H__ */

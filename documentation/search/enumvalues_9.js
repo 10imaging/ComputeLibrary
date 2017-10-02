@@ -1,7 +1,14 @@
 var searchData=
 [
-  ['nearest_5fneighbor',['NEAREST_NEIGHBOR',['../namespacearm__compute.xhtml#a966a9c417ce5e94dca08d9b5e745c0c9a7f5ccbc3d30c2cd3fd04d567946cbde2',1,'arm_compute']]],
-  ['nopadding',['NoPadding',['../structarm__compute_1_1_i_o_format_info.xhtml#ae283722f31a4c59039f9abd44f10dbd0a23bb2bd76e5604aace0bdaa7b279a8fd',1,'arm_compute::IOFormatInfo']]],
-  ['nv12',['NV12',['../namespacearm__compute.xhtml#ab4e88c89b3b7ea1735996cc4def22d58a202f5d8c2c70d31048154d8b8b28e755',1,'arm_compute']]],
-  ['nv21',['NV21',['../namespacearm__compute.xhtml#ab4e88c89b3b7ea1735996cc4def22d58a8e9f6aa1af7e0abbc7e64521e6ffe1b4',1,'arm_compute']]]
+  ['l1_5fnorm',['L1_NORM',['../namespacearm__compute.xhtml#a673665b4587a2956fcbad5f0e9ba89d3a68616ae21712c00705b962f4eff06eaa',1,'arm_compute']]],
+  ['l1norm',['L1NORM',['../namespacearm__compute.xhtml#a7b3ec6413f000b02fdb4e39a951d9f8aac2f1be73bf576190d1f42bdaf5162ae8',1,'arm_compute']]],
+  ['l2',['L2',['../namespacearm__compute.xhtml#a9172da722f0a434e5cc07c0a3c115d93a7e6aa2d53f6ee2b1a34b017fa403cb76',1,'arm_compute']]],
+  ['l2_5fnorm',['L2_NORM',['../namespacearm__compute.xhtml#a673665b4587a2956fcbad5f0e9ba89d3a80485e54c7a3c93a0f74637c6b918ce5',1,'arm_compute']]],
+  ['l2hys_5fnorm',['L2HYS_NORM',['../namespacearm__compute.xhtml#a673665b4587a2956fcbad5f0e9ba89d3ac9e68c0594494ec85805b225a7acb9c2',1,'arm_compute']]],
+  ['l2norm',['L2NORM',['../namespacearm__compute.xhtml#a7b3ec6413f000b02fdb4e39a951d9f8aad927ac799e8b24f80fc80d89b2eb7131',1,'arm_compute']]],
+  ['leaky_5frelu',['LEAKY_RELU',['../classarm__compute_1_1_activation_layer_info.xhtml#a56297e0f7b215eea46c818cb7528d9eaac7e80a3de04936f4e423e1b564fdca10',1,'arm_compute::ActivationLayerInfo']]],
+  ['linear',['LINEAR',['../classarm__compute_1_1_activation_layer_info.xhtml#a56297e0f7b215eea46c818cb7528d9eaaaac544aacc3615aada24897a215f5046',1,'arm_compute::ActivationLayerInfo']]],
+  ['log',['LOG',['../namespacearm__compute.xhtml#afa20b6a7f4383003babd690f026f22dca4b5ffcdaf38ce4d463171f5c977c5ab3',1,'arm_compute']]],
+  ['logistic',['LOGISTIC',['../classarm__compute_1_1_activation_layer_info.xhtml#a56297e0f7b215eea46c818cb7528d9eaa72ee60fba0509af07cbbd91398d8db9d',1,'arm_compute::ActivationLayerInfo']]],
+  ['lu_5fbounded_5frelu',['LU_BOUNDED_RELU',['../classarm__compute_1_1_activation_layer_info.xhtml#a56297e0f7b215eea46c818cb7528d9eaaab1d4411a9e7f5e82002512cddfdc33a',1,'arm_compute::ActivationLayerInfo']]]
 ];

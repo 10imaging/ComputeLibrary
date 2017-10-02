@@ -1,5 +1,5 @@
 var searchData=
 [
-  ['nonlinearfilterfunction',['NonLinearFilterFunction',['../namespacearm__compute.xhtml#adf2ced65e536375a1c96425d9fced858',1,'arm_compute']]],
-  ['normtype',['NormType',['../namespacearm__compute.xhtml#ad4bb8dabdbf8ad75e34220cc666b59ca',1,'arm_compute']]]
+  ['logformat',['LogFormat',['../namespacearm__compute_1_1test_1_1framework.xhtml#a043aa97de3c71ad015852f46ec4cc6ad',1,'arm_compute::test::framework']]],
+  ['loglevel',['LogLevel',['../namespacearm__compute_1_1test_1_1framework.xhtml#aca1fd1d8935433e6ba2e3918214e07f9',1,'arm_compute::test::framework']]]
 ];

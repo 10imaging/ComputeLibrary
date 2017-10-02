@@ -30,10 +30,10 @@ using namespace arm_compute;
 
 void NEFillBorder::configure(ITensor *input, unsigned int border_width, BorderMode border_mode, const PixelValue &constant_border_value)
 {
-    _border_handler.configure(input, border_width, border_mode, constant_border_value);
+    _border_handler.configure(input, BorderSize(border_width), border_mode, constant_border_value);
 }
 
 void NEFillBorder::run()
 {
-    NEScheduler::get().multithread(&_border_handler, Window::DimZ);
+    NEScheduler::get().schedule(&_border_handler, Window::DimZ);
 }

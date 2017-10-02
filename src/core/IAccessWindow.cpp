@@ -56,7 +56,10 @@ ValidRegion AccessWindowRectangle::compute_valid_region(const Window &window, Va
     // Additionally the valid region is shifted by the offset that is used by
     // the kernel to write back output values.
     anchor.set(0, std::max<int>(window.x().start() * _scale_x, anchor[0] + border_size.left) + _x);
-    anchor.set(1, std::max<int>(window.y().start() * _scale_y, anchor[1] + border_size.top) + _y);
+    if(_info->num_dimensions() > 1)
+    {
+        anchor.set(1, std::max<int>(window.y().start() * _scale_y, anchor[1] + border_size.top) + _y);
+    }
 
     // End of the valid region is equal to the start of the last write of the
     // kernel plus the number of written elements. (This assumes that all
@@ -67,7 +70,10 @@ ValidRegion AccessWindowRectangle::compute_valid_region(const Window &window, Va
     // execution window. Afterwards the new end points are converted back into
     // a size of the region.
     shape.set(0, std::min<int>(old_anchor[0] + shape[0] - border_size.right, (window.x().end() - window.x().step()) * _scale_x + _width) - anchor[0]);
-    shape.set(1, std::min<int>(old_anchor[1] + shape[1] - border_size.bottom, (window.y().end() - window.y().step()) * _scale_y + _height) - anchor[1]);
+    if(_info->num_dimensions() > 1)
+    {
+        shape.set(1, std::min<int>(old_anchor[1] + shape[1] - border_size.bottom, (window.y().end() - window.y().step()) * _scale_y + _height) - anchor[1]);
+    }
 
     // For higher dimensions use the intersection of the window size and the
     // valid region of the input
@@ -207,8 +213,8 @@ bool AccessWindowRectangle::update_padding_if_needed(const Window &window) const
     PaddingSize padding;
     padding.left   = std::max(0, -min_x);
     padding.right  = std::max<int>(0, max_x - shape[0]);
-    padding.top    = shape.num_dimensions() == 1 ? 0 : std::max(0, -min_y);
-    padding.bottom = shape.num_dimensions() == 1 ? 0 : std::max<int>(0, max_y - shape[1]);
+    padding.top    = std::max(0, -min_y);
+    padding.bottom = std::max<int>(0, max_y - shape[1]);
 
     // Update strides in tensor info
     return _info->extend_padding(padding);

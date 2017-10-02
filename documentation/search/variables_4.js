@@ -1,5 +1,7 @@
 var searchData=
 [
+  ['data_5ftype',['data_type',['../namespacearm__compute_1_1test_1_1validation.xhtml#ac2ad7f431e3446fddcd9b6b9f93c4c14',1,'arm_compute::test::validation']]],
+  ['data_5ftypes',['data_types',['../namespacearm__compute_1_1test.xhtml#aab9a2ff74a27ae837d32a79a38952228',1,'arm_compute::test']]],
   ['dimx',['DimX',['../classarm__compute_1_1_window.xhtml#aa96e81276ee4f87ab386cd05a5539a7d',1,'arm_compute::Window']]],
   ['dimy',['DimY',['../classarm__compute_1_1_window.xhtml#ad2d402364fa822b0b7775081291eeca9',1,'arm_compute::Window']]],
   ['dimz',['DimZ',['../classarm__compute_1_1_window.xhtml#a893d17b56b9abc4423ce26e9a24ac5dc',1,'arm_compute::Window']]],

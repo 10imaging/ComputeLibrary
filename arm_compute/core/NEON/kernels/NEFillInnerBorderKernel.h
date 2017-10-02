@@ -53,7 +53,7 @@ public:
      *
      * @note This kernel fills the borders within the XY-planes.
      *
-     * @param[in,out] input                 Tensor to process. Data types supported: U8, S16, S32, F32.
+     * @param[in,out] input                 Tensor to process. Data types supported: U8/QS8/S16/S32/F32.
      * @param[in]     border_size           Size of the border to fill in elements.
      * @param[in]     constant_border_value (Optional) Constant value to use for borders if border_mode is set to CONSTANT.
      *
@@ -61,7 +61,7 @@ public:
     void configure(ITensor *input, BorderSize border_size, const PixelValue &constant_border_value = PixelValue());
 
     // Inherited methods overridden:
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
 
 private:
     template <typename T>
@@ -71,5 +71,5 @@ private:
     BorderSize _border_size;
     PixelValue _constant_border_value;
 };
-}
+} // namespace arm_compute
 #endif /*__ARM_COMPUTE_NEFILLINNERBORDERKERNEL_H__ */

@@ -57,7 +57,7 @@ public:
 public:
     /** Setup the kernel parameters
      *
-     * @param[in]  input1           Source image (gradient X). Data types supported: S16, S32
+     * @param[in]  input1           Source image (gradient X). Data types supported: S16/S32
      * @param[in]  input2           Source image (gradient Y). Data types supported: same as @ input1
      * @param[out] output           Destination image (harris score). Data types supported: F32
      * @param[in]  norm_factor      Normalization factor to use accordingly with the gradient size (Must be different from 0)
@@ -89,7 +89,7 @@ public:
     // Inherited methods overridden:
     void configure(const IImage *input1, const IImage *input2, IImage *output, float norm_factor, float strength_thresh, float sensitivity, bool border_undefined) override;
     BorderSize border_size() const override;
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
 
 private:
     /** Common signature for all the specialised harris score functions */
@@ -110,7 +110,7 @@ public:
     // Inherited methods overridden:
     void configure(const IImage *input1, const IImage *input2, IImage *output, float norm_factor, float strength_thresh, float sensitivity, bool border_undefined) override;
     BorderSize border_size() const override;
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
 
 private:
     using HarrisScoreFunction = void(const void *__restrict input1_ptr, const void *__restrict input2_ptr, void *__restrict output_ptr, int32_t input_stride,
@@ -118,9 +118,9 @@ private:
     /** Harris Score function to use for the particular image types passed to configure() */
     HarrisScoreFunction *_func;
 };
-#else
+#else  /* ARM_COMPUTE_ENABLE_FP16 */
 template <int32_t block_size>
 using NEHarrisScoreFP16Kernel = NEHarrisScoreKernel<block_size>;
-#endif
-}
+#endif /* ARM_COMPUTE_ENABLE_FP16 */
+} // namespace arm_compute
 #endif /* __ARM_COMPUTE_NEHARRISCORNERSKERNEL_H__ */

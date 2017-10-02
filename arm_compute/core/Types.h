@@ -26,13 +26,18 @@
 
 #include "arm_compute/core/Coordinates.h"
 #include "arm_compute/core/TensorShape.h"
+#include "support/Half.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <utility>
 
 namespace arm_compute
 {
+/** 16-bit floating point type */
+using half = half_float::half;
+
 /** Image colour formats */
 enum class Format
 {
@@ -61,10 +66,13 @@ enum class DataType
     UNKNOWN,
     U8,
     S8,
+    QS8,
     U16,
     S16,
+    QS16,
     U32,
     S32,
+    QS32,
     U64,
     S64,
     F16,
@@ -100,6 +108,18 @@ struct ValidRegion
     {
     }
 
+    /** Return the start of the valid region for the given dimension @p d */
+    int start(unsigned int d) const
+    {
+        return anchor[d];
+    }
+
+    /** Return the end of the valid region for the given dimension @p d */
+    int end(unsigned int d) const
+    {
+        return anchor[d] + shape[d];
+    }
+
     Coordinates anchor;
     TensorShape shape;
 };
@@ -122,7 +142,7 @@ struct BorderSize
     }
 
     /** Border with equal size around the 2D plane */
-    constexpr BorderSize(unsigned int size)
+    explicit constexpr BorderSize(unsigned int size)
         : top{ size }, right{ size }, bottom{ size }, left{ size }
     {
     }
@@ -169,6 +189,14 @@ struct BorderSize
         return size;
     }
 
+    void limit(const BorderSize &limit)
+    {
+        top    = std::min(top, limit.top);
+        right  = std::min(right, limit.right);
+        bottom = std::min(bottom, limit.bottom);
+        left   = std::min(left, limit.left);
+    }
+
     unsigned int top;
     unsigned int right;
     unsigned int bottom;
@@ -210,7 +238,8 @@ enum class ThresholdType
 enum class RoundingPolicy
 {
     TO_ZERO,        /**< Truncates the least significand values that are lost in operations. */
-    TO_NEAREST_EVEN /**< Rounds to nearest even output value */
+    TO_NEAREST_UP,  /**< Rounds to nearest value; half rounds up */
+    TO_NEAREST_EVEN /**< Rounds to nearest value; half rounds to nearest even */
 };
 
 /** Termination criteria */
@@ -276,6 +305,13 @@ struct Coordinates3D
     uint32_t z; /**< Z coordinates */
 };
 
+/** Region of interest */
+struct ROI
+{
+    Rectangle rect;      /**< Rectangle specifying the region of interest */
+    uint16_t  batch_idx; /**< The batch index of the region of interest */
+};
+
 /** Available channels */
 enum class Channel
 {
@@ -310,20 +346,27 @@ enum class NonLinearFilterFunction : unsigned
     MAX    = 2, /**< Non linear dilate. */
 };
 
+/** Available reduction operations */
+enum class ReductionOperation
+{
+    SUM_SQUARE, /**< Sum of squares */
+    SUM,        /**< Sum */
+};
+
 /** The normalization type used for the normalization layer */
 enum class NormType
 {
-    IN_MAP,   /* Normalization applied within the same map */
-    CROSS_MAP /* Normalization applied cross maps */
+    IN_MAP_1D, /**< Normalization applied within the same map in 1D region */
+    IN_MAP_2D, /**< Normalization applied within the same map in 2D region */
+    CROSS_MAP  /**< Normalization applied cross maps */
 };
 
 /** Normalization type for Histogram of Oriented Gradients (HOG) */
 enum class HOGNormType
 {
-    L2_NORM,    /**< L2-norm */
-    L2HYS_NORM, /**< L2-norm followed by clipping */
-    L1_NORM,    /**< L1 norm */
-    L1SQRT_NORM /**< L1 norm with SQRT */
+    L2_NORM    = 1, /**< L2-norm */
+    L2HYS_NORM = 2, /**< L2-norm followed by clipping */
+    L1_NORM    = 3  /**< L1 norm */
 };
 
 /** Detection window used for the object detection. The detection window keeps the following information:
@@ -355,7 +398,8 @@ enum class DimensionRoundingType
 enum class PoolingType
 {
     MAX, /**< Max Pooling */
-    AVG  /**< Average Pooling */
+    AVG, /**< Average Pooling */
+    L2   /**< L2 Pooling */
 };
 
 /** Padding and stride information class */
@@ -430,6 +474,39 @@ private:
     PadStrideInfo _pad_stride_info;
 };
 
+/** ROI Pooling Layer Information class */
+class ROIPoolingLayerInfo
+{
+public:
+    /** Default Constructor
+     *
+     * @param[in] pooled_width  Pooled width of the layer.
+     * @param[in] pooled_height Pooled height of the layer.
+     * @param[in] spatial_scale Spatial scale to be applied to the ROI coordinates and dimensions.
+     */
+    ROIPoolingLayerInfo(unsigned int pooled_width, unsigned int pooled_height, float spatial_scale)
+        : _pooled_width(pooled_width), _pooled_height(pooled_height), _spatial_scale(spatial_scale)
+    {
+    }
+    unsigned int pooled_width() const
+    {
+        return _pooled_width;
+    }
+    unsigned int pooled_height() const
+    {
+        return _pooled_height;
+    }
+    float spatial_scale() const
+    {
+        return _spatial_scale;
+    }
+
+private:
+    unsigned int _pooled_width;
+    unsigned int _pooled_height;
+    float        _spatial_scale;
+};
+
 /** Activation Layer Information class */
 class ActivationLayerInfo
 {
@@ -437,23 +514,25 @@ public:
     /** Available activation functions */
     enum class ActivationFunction
     {
-        LOGISTIC,     /**< Logistic */
-        TANH,         /**< Hyperbolic tangent */
-        RELU,         /**< Rectifier */
-        BOUNDED_RELU, /**< Bounded Rectifier */
-        SOFT_RELU,    /**< Soft Rectifier */
-        ABS,          /**< Absolute */
-        SQUARE,       /**< Square */
-        SQRT,         /**< Square root */
-        LINEAR        /**< Linear */
+        LOGISTIC,        /**< Logistic ( \f$ f(x) = \frac{1}{1 + e^{-x}} \f$ ) */
+        TANH,            /**< Hyperbolic tangent ( \f$ f(x) = a \cdot tanh(b \cdot x) \f$ ) */
+        RELU,            /**< Rectifier ( \f$ f(x) = max(0,x) \f$ ) */
+        BOUNDED_RELU,    /**< Upper Bounded Rectifier ( \f$ f(x) = min(a, max(0,x)) \f$ ) */
+        LU_BOUNDED_RELU, /**< Lower and Upper Bounded Rectifier ( \f$ f(x) = min(a, max(b,x)) \f$ ) */
+        LEAKY_RELU,      /**< Leaky Rectifier ( \f$ f(x)= log(1+e^x) \f$ ) */
+        SOFT_RELU,       /**< Soft Rectifier ( \f$ f(x)= log(1+e^x) \f$ ) */
+        ABS,             /**< Absolute ( \f$ f(x)= |x| \f$ ) */
+        SQUARE,          /**< Square ( \f$ f(x)= x^2 \f$ )*/
+        SQRT,            /**< Square root ( \f$ f(x) = \sqrt{x} \f$ )*/
+        LINEAR           /**< Linear ( \f$ f(x)= ax + b \f$ ) */
     };
 
     /** Default Constructor
      *
      * @param[in] f The activation function to use.
      * @param[in] a (Optional) The alpha parameter used by some activation functions
-     *              (@ref ActivationFunction::BOUNDED_RELU, @ref ActivationFunction::LINEAR, @ref ActivationFunction::TANH).
-     * @param[in] b (Optional) The beta parameter used by some activation functions (@ref ActivationFunction::LINEAR, @ref ActivationFunction::TANH).
+     *              (@ref ActivationFunction::BOUNDED_RELU, @ref ActivationFunction::LU_BOUNDED_RELU, @ref ActivationFunction::LINEAR, @ref ActivationFunction::TANH).
+     * @param[in] b (Optional) The beta parameter used by some activation functions (@ref ActivationFunction::LINEAR, @ref ActivationFunction::LU_BOUNDED_RELU, @ref ActivationFunction::TANH).
      */
     ActivationLayerInfo(ActivationFunction f, float a = 0.0f, float b = 0.0f)
         : _act(f), _a(a), _b(b)
@@ -484,7 +563,7 @@ class NormalizationLayerInfo
 public:
     /** Default Constructor
      *
-     * @param[in] type      The normalization type. Can be @ref NormType::IN_MAP or NORM_TYPE::CROSS_MAP
+     * @param[in] type      The normalization type. Can be @ref NormType::IN_MAP_1D, @ref NormType::IN_MAP_2D or @ref NORM_TYPE::CROSS_MAP
      * @param[in] norm_size The normalization size is the number of elements to normalize across. Defaults to 5.
      * @param[in] alpha     Alpha parameter used by normalization equation. Defaults to 0.0001.
      * @param[in] beta      Beta parameter used by normalization equation. Defaults to 0.5.
@@ -514,12 +593,17 @@ public:
     {
         return _kappa;
     }
-    /** Return the scaling factor of the normalization function. If kappa is not 1 then [Krichevksy 2012] normalization scaling is specified.
+    /** Return the scaling factor of the normalization function. If kappa is not
+     * 1 then [Krichevksy 2012] normalization scaling is specified. Scaling
+     * factor takes into account the total number of elements used for the
+     * normalization, so in case of 2 dimensions this is _norm_size^2.
+     *
      * @return The normalization scaling factor.
      */
     float scale_coeff() const
     {
-        return (_kappa == 1.f) ? (_alpha / _norm_size) : _alpha;
+        const uint32_t size = (_type == NormType::IN_MAP_2D) ? _norm_size * _norm_size : _norm_size;
+        return (_kappa == 1.f) ? (_alpha / size) : _alpha;
     }
 
 private:
@@ -528,6 +612,58 @@ private:
     float    _alpha;
     float    _beta;
     float    _kappa;
+};
+
+/** Convolution Layer Weights Information class. This class stores the necessary information to compute convolution layer when the weights are already reshaped */
+class WeightsInfo
+{
+public:
+    /** Default constructor */
+    WeightsInfo()
+        : _are_reshaped(false), _kernel_width(0), _kernel_height(0), _num_kernels(0)
+    {
+    }
+    /** Constructor
+     *
+     * @param[in] are_reshaped  True if the weights have been reshaped
+     * @param[in] kernel_width  Kernel width.
+     * @param[in] kernel_height Kernel height.
+     * @param[in] num_kernels   Number of convolution kernels.
+     */
+    WeightsInfo(bool are_reshaped, unsigned int kernel_width, unsigned int kernel_height, unsigned int num_kernels)
+        : _are_reshaped(are_reshaped), _kernel_width(kernel_width), _kernel_height(kernel_height), _num_kernels(num_kernels)
+    {
+    }
+    /** Flag which specifies if the weights tensor has been reshaped.
+     *
+     * @return True if the weights tensors has been reshaped
+     */
+    bool are_reshaped() const
+    {
+        return _are_reshaped;
+    };
+    /** Return the number of convolution kernels
+     *
+     * @return The number of convolution kernels
+     */
+    unsigned int num_kernels() const
+    {
+        return _num_kernels;
+    };
+    /** Return the width and height of the kernel
+     *
+     * @return The width and height of the kernel
+     */
+    std::pair<unsigned int, unsigned int> kernel_size() const
+    {
+        return std::make_pair(_kernel_width, _kernel_height);
+    }
+
+private:
+    const bool         _are_reshaped;
+    const unsigned int _kernel_width;
+    const unsigned int _kernel_height;
+    const unsigned int _num_kernels;
 };
 
 /** IO formatting information class*/

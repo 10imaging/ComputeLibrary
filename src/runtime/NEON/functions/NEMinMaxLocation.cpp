@@ -32,7 +32,7 @@ NEMinMaxLocation::NEMinMaxLocation()
 {
 }
 
-void NEMinMaxLocation::configure(const IImage *input, int32_t *min, int32_t *max, ICoordinates2DArray *min_loc, ICoordinates2DArray *max_loc, uint32_t *min_count, uint32_t *max_count)
+void NEMinMaxLocation::configure(const IImage *input, void *min, void *max, ICoordinates2DArray *min_loc, ICoordinates2DArray *max_loc, uint32_t *min_count, uint32_t *max_count)
 {
     _min_max.configure(input, min, max);
     _min_max_loc.configure(input, min, max, min_loc, max_loc, min_count, max_count);
@@ -43,8 +43,8 @@ void NEMinMaxLocation::run()
     _min_max.reset();
 
     /* Run min max kernel */
-    NEScheduler::get().multithread(&_min_max);
+    NEScheduler::get().schedule(&_min_max, Window::DimY);
 
     /* Run min max location */
-    NEScheduler::get().multithread(&_min_max_loc);
+    NEScheduler::get().schedule(&_min_max_loc, Window::DimY);
 }

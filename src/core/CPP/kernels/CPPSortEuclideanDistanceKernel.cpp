@@ -60,7 +60,7 @@ void CPPSortEuclideanDistanceKernel::configure(InternalKeypoint *in_out, IKeyPoi
     _output                = output;
     _min_distance          = min_distance * min_distance; // We compare squares of distances
     _num_corner_candidates = num_corner_candidates;
-    INEKernel::configure(Window()); // Default 1 iteration window
+    ICPPKernel::configure(Window()); // Default 1 iteration window
 }
 
 bool CPPSortEuclideanDistanceKernel::is_parallelisable() const
@@ -68,10 +68,11 @@ bool CPPSortEuclideanDistanceKernel::is_parallelisable() const
     return false;
 }
 
-void CPPSortEuclideanDistanceKernel::run(const Window &window)
+void CPPSortEuclideanDistanceKernel::run(const Window &window, const ThreadInfo &info)
 {
+    ARM_COMPUTE_UNUSED(info);
     ARM_COMPUTE_ERROR_ON_UNCONFIGURED_KERNEL(this);
-    ARM_COMPUTE_ERROR_ON_MISMATCHING_WINDOWS(INEKernel::window(), window);
+    ARM_COMPUTE_ERROR_ON_MISMATCHING_WINDOWS(ICPPKernel::window(), window);
 
     const int32_t num_corner_candidates = *_num_corner_candidates;
 

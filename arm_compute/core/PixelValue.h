@@ -24,6 +24,8 @@
 #ifndef __ARM_COMPUTE_PIXELVALUE_H__
 #define __ARM_COMPUTE_PIXELVALUE_H__
 
+#include "arm_compute/core/Types.h"
+
 #include <cstdint>
 
 namespace arm_compute
@@ -82,6 +84,15 @@ public:
     {
         value.s32 = v;
     }
+    /** Initialize the union with a F16 pixel value
+     *
+     * @param[in] v F16 value.
+     */
+    PixelValue(half v)
+        : PixelValue()
+    {
+        value.f16 = v;
+    }
     /** Initialize the union with a F32 pixel value
      *
      * @param[in] v F32 value.
@@ -100,7 +111,9 @@ public:
             uint8_t  yuv[3];  /**< 3 channels: Any YUV format */
             uint8_t  rgbx[4]; /**< 4 channels: RGBX8888 */
             float    f32;     /**< Single channel float 32 */
+            half     f16;     /**< Single channel F16 */
             uint8_t  u8;      /**< Single channel U8 */
+            int8_t   s8;      /**< Single channel S8 */
             uint16_t u16;     /**< Single channel U16 */
             int16_t  s16;     /**< Single channel S16 */
             uint32_t u32;     /**< Single channel U32 */
@@ -113,6 +126,14 @@ public:
     void get(uint8_t &v) const
     {
         v = value.u8;
+    }
+    /** Interpret the pixel value as a S8
+     *
+     * @param[out] v Returned value
+     */
+    void get(int8_t &v) const
+    {
+        v = value.s8;
     }
     /** Interpret the pixel value as a U16
      *
@@ -145,6 +166,14 @@ public:
     void get(int32_t &v) const
     {
         v = value.s32;
+    }
+    /** Interpret the pixel value as a F16
+     *
+     * @param[out] v Returned value
+     */
+    void get(half &v) const
+    {
+        v = value.f16;
     }
     /** Interpret the pixel value as a F32
      *

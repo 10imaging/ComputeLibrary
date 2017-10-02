@@ -24,8 +24,8 @@
 #ifndef __ARM_COMPUTE_CPPSORTEUCLIDEANDISTANCEKERNEL_H__
 #define __ARM_COMPUTE_CPPSORTEUCLIDEANDISTANCEKERNEL_H__
 
+#include "arm_compute/core/CPP/ICPPKernel.h"
 #include "arm_compute/core/IArray.h"
-#include "arm_compute/core/NEON/INEKernel.h"
 
 #include <cstdint>
 #include <mutex>
@@ -33,7 +33,7 @@
 namespace arm_compute
 {
 /** CPP kernel to perform sorting and euclidean distance */
-class CPPSortEuclideanDistanceKernel : public INEKernel
+class CPPSortEuclideanDistanceKernel : public ICPPKernel
 {
 public:
     /** Default constructor */
@@ -56,15 +56,14 @@ public:
     void configure(InternalKeypoint *in_out, IKeyPointArray *output, const int32_t *num_corner_candidates, float min_distance);
 
     // Inherited methods overridden:
-    void run(const Window &window) override;
+    void run(const Window &window, const ThreadInfo &info) override;
     bool is_parallelisable() const override;
 
 private:
     const int32_t    *_num_corner_candidates; /**< Number of corner candidates */
     float             _min_distance;          /**< Radial Euclidean distance */
     InternalKeypoint *_in_out;                /**< Source array of InternalKeypoint */
-    IKeyPointArray   *_output;                /**< Destination array of NEKeyPointArray */
+    IKeyPointArray   *_output;                /**< Destination array of IKeyPointArray */
 };
-
 } // namespace arm_compute
 #endif /* __ARM_COMPUTE_CPPSORTEUCLIDEANDISTANCEKERNEL_H__ */

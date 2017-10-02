@@ -26,16 +26,16 @@
 using namespace arm_compute;
 
 Tensor::Tensor()
-    : _allocator()
+    : _allocator(this)
 {
 }
 
-TensorInfo *Tensor::info() const
+ITensorInfo *Tensor::info() const
 {
     return &_allocator.info();
 }
 
-TensorInfo *Tensor::info()
+ITensorInfo *Tensor::info()
 {
     return &_allocator.info();
 }

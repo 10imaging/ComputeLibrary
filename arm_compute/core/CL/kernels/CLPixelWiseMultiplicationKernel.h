@@ -21,8 +21,8 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  */
-#ifndef __ARM_COMPUTE_CLDEPTHCONVERTKERNEL_H__
-#define __ARM_COMPUTE_CLDEPTHCONVERTKERNEL_H__
+#ifndef __ARM_COMPUTE_CLPIXELWISEMULTIPLICATIONKERNEL_H__
+#define __ARM_COMPUTE_CLPIXELWISEMULTIPLICATIONKERNEL_H__
 
 #include "arm_compute/core/CL/ICLKernel.h"
 #include "arm_compute/core/Types.h"
@@ -49,11 +49,11 @@ public:
     CLPixelWiseMultiplicationKernel &operator=(CLPixelWiseMultiplicationKernel &&) = default;
     /** Initialise the kernel's input, output and border mode.
      *
-     * @param[in]  input1          An input tensor. Data types supported: U8, S16, F16, F32.
-     * @param[in]  input2          An input tensor. Data types supported: U8, S16, F16, F32.
-     * @param[out] output          The output tensor, Data types supported: U8 (Only if both inputs are U8), S16, F16, F32.
+     * @param[in]  input1          An input tensor. Data types supported: U8/QS8/QS16/S16/F16/F32.
+     * @param[in]  input2          An input tensor. Data types supported: same as @p input1.
+     * @param[out] output          The output tensor, Data types supported: same as @p input1. Note: U8 (QS8, QS16) requires both inputs to be U8 (QS8, QS16).
      * @param[in]  scale           Scale to apply after multiplication.
-     *                             Scale must be positive and its value must be either 1/255 or 1/2^n where n is between 0 and 15.
+     *                             Scale must be positive and its value must be either 1/255 or 1/2^n where n is between 0 and 15. For QS8 and QS16 scale must be 1.
      * @param[in]  overflow_policy Overflow policy. Supported overflow policies: Wrap, Saturate
      * @param[in]  rounding_policy Rounding policy. Supported rounding modes: to zero, to nearest even.
      */
@@ -68,6 +68,5 @@ private:
     const ICLTensor *_input2;
     ICLTensor       *_output;
 };
-}
-
-#endif /*__ARM_COMPUTE_CLDEPTHCONVERTKERNEL_H__ */
+} // namespace arm_compute
+#endif /*__ARM_COMPUTE_CLPIXELWISEMULTIPLICATIONKERNEL_H__ */

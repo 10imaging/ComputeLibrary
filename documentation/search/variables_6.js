@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['f32',['f32',['../classarm__compute_1_1_pixel_value.xhtml#a7d886905c667c4e8e91251b6a3a98f39',1,'arm_compute::PixelValue']]]
+  ['fd',['fd',['../hwc_8hpp.xhtml#a4a05f54831975728fbdcadcb6fc4d40e',1,'hwc.hpp']]],
+  ['flags',['flags',['../hwc_8hpp.xhtml#a773b39d480759f67926cb18ae2219281',1,'hwc.hpp']]]
 ];
